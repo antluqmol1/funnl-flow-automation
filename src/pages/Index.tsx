@@ -1,12 +1,34 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+
+import React from 'react';
+import PageHeader from '@/components/layout/PageHeader';
+import BottomNavbar from '@/components/layout/BottomNavbar';
+import NextBestAction from '@/components/activities/NextBestAction';
+import ActivityFilter from '@/components/activities/ActivityFilter';
+import TaskItem from '@/components/activities/TaskItem';
+import { tasks } from '@/lib/dummyData';
 
 const Index = () => {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">Welcome to Your Blank App</h1>
-        <p className="text-xl text-gray-600">Start building your amazing project here!</p>
+    <div className="mobile-container">
+      <PageHeader 
+        title="Daily Activities" 
+        subtitle="Manage your tasks and appointments"
+      />
+      
+      <div className="p-4">
+        <NextBestAction />
+        
+        <h2 className="section-title">Today's Tasks</h2>
+        <ActivityFilter />
+        
+        <div className="space-y-3">
+          {tasks.map(task => (
+            <TaskItem key={task.id} task={task} />
+          ))}
+        </div>
       </div>
+      
+      <BottomNavbar />
     </div>
   );
 };

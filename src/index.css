@@ -1,3 +1,4 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,11 +14,11 @@
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 258 80% 74%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 262 26% 54%;
+    --secondary-foreground: 0 0% 100%;
 
     --muted: 210 40% 96.1%;
     --muted-foreground: 215.4 16.3% 46.9%;
@@ -30,24 +31,17 @@
 
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --ring: 258 80% 74%;
 
     --radius: 0.5rem;
 
     --sidebar-background: 0 0% 98%;
-
     --sidebar-foreground: 240 5.3% 26.1%;
-
     --sidebar-primary: 240 5.9% 10%;
-
     --sidebar-primary-foreground: 0 0% 98%;
-
     --sidebar-accent: 240 4.8% 95.9%;
-
     --sidebar-accent-foreground: 240 5.9% 10%;
-
     --sidebar-border: 220 13% 91%;
-
     --sidebar-ring: 217.2 91.2% 59.8%;
   }
 
@@ -61,11 +55,11 @@
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 258 80% 74%;
+    --primary-foreground: 0 0% 100%;
 
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 262 26% 54%;
+    --secondary-foreground: 0 0% 100%;
 
     --muted: 217.2 32.6% 17.5%;
     --muted-foreground: 215 20.2% 65.1%;
@@ -78,15 +72,7 @@
 
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --ring: 258 80% 74%;
   }
 }
 
@@ -97,5 +83,59 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  .funnl-card {
+    @apply bg-white rounded-xl shadow-md p-4 border border-gray-100;
+  }
+  
+  .funnl-item {
+    @apply bg-white rounded-lg shadow-sm p-3 border border-gray-100 mb-2 transition-all hover:shadow-md;
+  }
+  
+  .funnl-badge {
+    @apply text-xs px-2 py-1 rounded-full font-medium;
+  }
+  
+  .funnl-badge-success {
+    @apply bg-green-100 text-green-800;
+  }
+  
+  .funnl-badge-warning {
+    @apply bg-yellow-100 text-yellow-800;
+  }
+  
+  .funnl-badge-info {
+    @apply bg-funnl-soft-purple text-funnl-secondary;
+  }
+  
+  .funnl-badge-danger {
+    @apply bg-red-100 text-red-800;
+  }
+  
+  .mobile-container {
+    @apply max-w-md mx-auto min-h-screen bg-gray-50 pb-20;
+  }
+  
+  .section-title {
+    @apply text-lg font-semibold text-gray-800 mb-3;
+  }
+
+  .section-subtitle {
+    @apply text-sm text-gray-500 mb-4;
+  }
+  
+  .bottom-tabs {
+    @apply fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex justify-around items-center p-2 pt-3 pb-7 shadow-md z-50;
+  }
+  
+  .tab-item {
+    @apply flex flex-col items-center justify-center text-xs font-medium;
+  }
+  
+  .tab-icon {
+    @apply mb-1 h-6 w-6;
   }
 }
