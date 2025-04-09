@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import PageHeader from '@/components/layout/PageHeader';
 import BottomNavbar from '@/components/layout/BottomNavbar';
@@ -144,7 +143,7 @@ const Agent = () => {
         >
           {isRecording ? (
             <>
-              <Stop className="h-5 w-5 mr-2" />
+              <StopCircle className="h-5 w-5 mr-2" />
               Stop Recording
             </>
           ) : (
