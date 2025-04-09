@@ -1,9 +1,11 @@
+
 import React, { useState } from 'react';
 import PageHeader from '@/components/layout/PageHeader';
 import BottomNavbar from '@/components/layout/BottomNavbar';
 import { Button } from '@/components/ui/button';
 import { Mic, StopCircle, Play, MessageSquare } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
+import { ScrollArea } from '@/components/ui/scroll-area';
 
 const Agent = () => {
   const [isRecording, setIsRecording] = useState(false);
@@ -87,44 +89,46 @@ const Agent = () => {
       />
       
       <div className="p-4 pb-24 h-full"> 
-        <div className="bg-gray-50 rounded-lg p-3 h-[calc(100vh-220px)] overflow-y-auto mb-3">
-          {audioMessages.map((msg, idx) => (
-            <div 
-              key={idx} 
-              className={`mb-3 ${
-                msg.type === 'user' ? 'text-right' : ''
-              }`}
-            >
-              <div className={`inline-block p-3 rounded-lg max-w-[85%] ${
-                msg.type === 'user' 
-                  ? 'bg-funnl-primary text-white' 
-                  : 'bg-white border border-gray-200'
-              }`}>
-                <div className="flex items-center">
-                  {msg.type === 'user' ? (
-                    <Mic className="h-5 w-5 mr-2" />
-                  ) : (
-                    <MessageSquare className="h-5 w-5 mr-2" />
-                  )}
-                  <span>{msg.content}</span>
-                  {msg.type === 'user' && (
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      className="ml-2 h-6 w-6 p-0"
-                      onClick={() => playAudioMessage(idx)}
-                    >
-                      <Play className="h-3 w-3" />
-                    </Button>
-                  )}
-                </div>
-                <div className="text-xs mt-1 opacity-70">
-                  {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+        <ScrollArea className="h-[calc(100vh-220px)] mb-3">
+          <div className="p-3">
+            {audioMessages.map((msg, idx) => (
+              <div 
+                key={idx} 
+                className={`mb-3 ${
+                  msg.type === 'user' ? 'text-right' : ''
+                }`}
+              >
+                <div className={`inline-block p-3 rounded-lg max-w-[85%] ${
+                  msg.type === 'user' 
+                    ? 'bg-funnl-primary text-white' 
+                    : 'bg-white border border-gray-200'
+                }`}>
+                  <div className="flex items-center">
+                    {msg.type === 'user' ? (
+                      <Mic className="h-5 w-5 mr-2" />
+                    ) : (
+                      <MessageSquare className="h-5 w-5 mr-2" />
+                    )}
+                    <span>{msg.content}</span>
+                    {msg.type === 'user' && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        className="ml-2 h-6 w-6 p-0"
+                        onClick={() => playAudioMessage(idx)}
+                      >
+                        <Play className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                  <div className="text-xs mt-1 opacity-70">
+                    {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </ScrollArea>
         
         {isRecording && (
           <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg animate-pulse-light">

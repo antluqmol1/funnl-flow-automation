@@ -21,9 +21,9 @@ const BottomNavbar = () => {
         <Users className="tab-icon" />
         <span>Funnel</span>
       </Link>
-      <Link to="/agent" className={`tab-item-highlighted ${pathname === '/agent' ? 'bg-funnl-secondary' : 'bg-funnl-primary'}`}>
-        <MessageSquare className="tab-icon text-white" />
-        <span className="text-white">Agent</span>
+      <Link to="/agent" className={getLinkClass('/agent')}>
+        <MessageSquare className="tab-icon" />
+        <span>Agent</span>
       </Link>
       <Link to="/meetings" className={getLinkClass('/meetings')}>
         <Video className="tab-icon" />
