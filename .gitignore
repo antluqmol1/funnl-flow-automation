@@ -7,10 +7,21 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Directorios de dependencias y compilación
 node_modules
 dist
 dist-ssr
+build/
+
+# Archivos y carpetas de entorno y configuración sensibles
 *.local
+.env*
+*.tsbuildinfo
+
+# Cobertura y caché
+coverage/
+.cache/
+.parcel-cache/
 
 # Editor directories and files
 .vscode/*
@@ -22,3 +33,16 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Added by Claude Task Master
+dev-debug.log
+# Dependency directories
+node_modules/
+# Environment variables
+.env
+.vscode
+.cursor/
+# OS specific
+# Task files
+tasks.json
+tasks/ 

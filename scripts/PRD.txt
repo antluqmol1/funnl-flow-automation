@@ -1,0 +1,311 @@
+<context>
+# Overview  
+[Provide a high-level overview of your product here. Explain what problem it solves, who it's for, and why it's valuable.]
+
+# Core Features  
+[List and describe the main features of your product. For each feature, include:
+- What it does
+- Why it's important
+- How it works at a high level]
+
+# User Experience  
+[Describe the user journey and experience. Include:
+- User personas
+- Key user flows
+- UI/UX considerations]
+</context>
+<PRD>
+# Overview
+funnl-flow-automation is an intelligent mobile/PWA application focused on sales. Its purpose is to help sales professionals manage their customer funnel flow, daily tasks, and leverage AI to automate processes and obtain actionable information. The app aims to be attractive in design, agile in daily use, scalable, and efficient, integrating functionalities such as prospect tracking, automatic reminders, and meeting transcription/summary.
+
+Key users: Sales representatives, sales managers, and freelancers who need to organize their sales pipeline with AI assistance (e.g., an assistant that suggests next steps or summarizes information).
+
+Platform: Cross-platform PWA (usable on mobile as an installed app and on desktop), with Node.js/Express backend, database and authentication provided by Supabase, and integrations with external services as needed (e.g., AI APIs, external CRMs).
+
+# Current State
+
+## UI Prototype
+- Initial prototype developed with Lovable tool
+- PWA structure using React + Vite + TypeScript
+- TailwindCSS for styling and Radix UI for accessible components
+- Base design with color theme and reusable components
+- Initial navigation structure
+
+## Supabase Integration
+- Project configured with `@supabase/supabase-js`
+- Config file in place (`supabase/config.toml`)
+- PostgreSQL database ready for use
+- Initial tables defined
+- Basic front-Supabase communication configured
+- Supabase Auth pending implementation
+
+## Technical Stack
+- TypeScript configured for frontend (backend pending)
+- Modern frontend tools:
+  - React Hooks
+  - React Router v6
+  - Tanstack Query for data caching
+  - Recharts for data visualization
+- Responsive design with TailwindCSS and Radix components
+- Basic infrastructure with organized folder structure
+- Linting and TypeScript configurations in place
+
+*(Note: Express server not yet incorporated, continuous deployment and automated testing pending)*
+
+# Core Features
+
+## 1. Daily Task Management
+- **Task Creation and Editing**
+  - What: Create and manage daily tasks with title, description, due date, priority, and status
+  - Why: Keeps sales professionals organized and focused on important activities
+  - How: Supabase database integration with real-time updates using react-query
+  Technical details:
+    - Tasks stored in Supabase `tasks` table with user relationship
+    - Real-time updates using react-query
+    - Optional PWA notifications for reminders
+    - AI integration for task summarization and prioritization
+
+- **Task Listing and Filtering**
+  - What: Display and filter daily tasks
+  - Why: Provides clear overview of pending work
+  - How: Dashboard view with filtering capabilities
+  Technical details:
+    - Main screen shows today's tasks
+    - Filters for completed vs pending
+    - Date-based filtering
+    - Real-time updates on task changes
+
+## 2. Sales Funnel Visualization
+- **Data Model**
+  - What: Database structure for sales funnel
+  - Why: Organizes sales pipeline data effectively
+  - How: Supabase tables with relationships
+  Technical details:
+    - `leads`/`deals` table with fields:
+      - Client/prospect name
+      - Company
+      - Potential value
+      - Current stage
+      - Last activity date
+      - Owner assignment
+    - Related tables: `contacts`, relationships with `deals`
+
+- **Pipeline Interface**
+  - What: Kanban-style board for opportunities
+  - Why: Visual management of sales pipeline
+  - How: Drag-and-drop interface with stage columns
+  Technical details:
+    - Columns for each funnel stage
+    - Deal cards with key information
+    - Drag-and-drop implementation
+    - Automatic actions on stage changes
+
+## 3. Intelligent Automation
+- **Business Rules**
+  - What: Automated actions based on conditions
+  - Why: Reduces manual work and ensures consistency
+  - How: Supabase triggers and scheduled functions
+  Technical details:
+    - Trigger examples:
+      - New web lead → Create welcome email task
+      - Inactive deal → Create follow-up task
+      - Won deal → Send team summary
+    - Implementation via Supabase Functions or Node.js cron jobs
+
+- **AI Automation**
+  - What: AI-powered automated actions
+  - Why: Intelligent process automation
+  - How: Integration with AI services via MCP
+  Technical details:
+    - Meeting transcription → Automatic task creation
+    - Pipeline analysis → Weekly suggestions
+    - Future: Custom automation rules UI
+
+## 4. Meeting Management
+- **Recording System**
+  - What: Audio recording and file management
+  - Why: Capture meeting content for analysis
+  - How: PWA MediaRecorder API + Supabase Storage
+  Technical details:
+    - Record button with timer
+    - File upload alternative
+    - Secure storage in Supabase
+    - Audio format handling
+
+- **Transcription Service**
+  - What: Convert audio to searchable text
+  - Why: Create searchable meeting records
+  - How: Whisper API or local implementation
+  Technical details:
+    - Options:
+      - OpenAI Whisper API
+      - Self-hosted Whisper
+      - Alternative services (Google/AssemblyAI)
+    - Storage in `meeting_notes` table
+
+## 5. AI Integration
+- **Conversational Assistant**
+  - What: Chat interface for data queries
+  - Why: Easy access to insights and help
+  - How: MCP tools with database access
+  Technical details:
+    - MCP tools for data access
+    - System prompt with available functions
+    - Floating chat component
+    - Real-time responses
+
+- **Content Generation**
+  - What: AI-powered content creation
+  - Why: Improve communication efficiency
+  - How: GPT/Claude integration
+  Technical details:
+    - Email templates
+    - Follow-up messages
+    - Meeting summaries
+    - Action item extraction
+
+# User Experience
+
+## User Personas
+1. **Sales Representative**
+   - Needs daily task organization
+   - Manages multiple deals in pipeline
+   - Requires meeting documentation
+   - Wants AI assistance for routine tasks
+
+2. **Sales Manager**
+   - Oversees team performance
+   - Analyzes funnel metrics
+   - Needs team activity insights
+   - Uses AI for strategic decisions
+
+3. **Freelance Sales Professional**
+   - Manages personal sales pipeline
+   - Needs efficient client communication
+   - Requires mobile-first solution
+   - Values AI automation for productivity
+
+## Key User Flows
+1. **Daily Task Management**
+   - View daily task list
+   - Create/complete tasks
+   - Receive AI-powered suggestions
+   - Track task progress
+
+2. **Deal Management**
+   - Add new leads to pipeline
+   - Move deals through stages
+   - Record meeting notes
+   - Get AI insights on deals
+
+3. **Meeting Documentation**
+   - Record/upload meeting audio
+   - Get automatic transcription
+   - Review AI summary
+   - Extract action items
+
+## Technical Considerations
+
+### PWA Implementation
+- Proper manifest.json configuration
+- Service Worker setup with Workbox/Vite PWA
+- Offline data access
+- Installation support for Android/iOS
+
+### Performance Optimization
+- Bundle size optimization
+- Code splitting for routes
+- Efficient component loading
+- Image optimization
+
+### Security Measures
+- Secure JWT storage
+- Row Level Security in Supabase
+- Input sanitization
+- Security middleware implementation
+
+# Development Tasks
+
+## Backend & Infrastructure
+1. **Express + Supabase Auth Setup**
+   - User authentication implementation
+   - JWT verification
+   - Express integration
+
+2. **Task API**
+   - CRUD endpoints
+   - Business logic implementation
+   - Real-time updates
+
+3. **Funnel API**
+   - Deal management endpoints
+   - Stage updates
+   - Analytics endpoints
+
+4. **Transcription Service**
+   - Audio file handling
+   - Transcription integration
+   - Storage management
+
+5. **AI Service**
+   - Summary generation
+   - Action item extraction
+   - Response caching
+
+6. **Automation System**
+   - Scheduled tasks
+   - Trigger handling
+   - Notification system
+
+## Frontend Implementation
+1. **Authentication Views**
+   - Login/Register components
+   - Route protection
+   - Session management
+
+2. **Dashboard**
+   - Daily summary
+   - Task overview
+   - Quick actions
+
+3. **Task Components**
+   - Task list with filters
+   - Add/edit forms
+   - Status updates
+
+4. **Pipeline View**
+   - Kanban board
+   - Deal cards
+   - Drag-and-drop
+
+5. **Meeting Features**
+   - Recording interface
+   - Transcription display
+   - Summary view
+
+## DevOps & Quality
+1. **Security Setup**
+   - RLS policies
+   - Authentication flow
+   - Data access control
+
+2. **Testing Implementation**
+   - Unit tests
+   - Integration tests
+   - UI testing
+
+3. **Documentation**
+   - API documentation
+   - Setup guides
+   - User documentation
+
+4. **Performance Optimization**
+   - Load time optimization
+   - Resource optimization
+   - Caching strategy
+
+5. **User Testing**
+   - Flow validation
+   - Interface testing
+   - Performance monitoring
+</PRD>
