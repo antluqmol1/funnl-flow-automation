@@ -8,6 +8,7 @@ import Index from "./pages/Index";
 import Funnel from "./pages/Funnel";
 import Agent from "./pages/Agent";
 import Automations from "./pages/Automations";
+import Meetings from "./pages/Meetings";
 import ContactDetail from "./pages/ContactDetail";
 import RecordingDetail from "./pages/RecordingDetail";
 import NotFound from "./pages/NotFound";
@@ -25,6 +26,7 @@ const App = () => (
           <Route path="/funnel" element={<Funnel />} />
           <Route path="/agent" element={<Agent />} />
           <Route path="/automations" element={<Automations />} />
+          <Route path="/meetings" element={<Meetings />} />
           <Route path="/contact/:id" element={<ContactDetail />} />
           <Route path="/recording/:id" element={<RecordingDetail />} />
           <Route path="*" element={<NotFound />} />

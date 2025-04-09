@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { CalendarClock, Users, MessageSquare, Settings } from 'lucide-react';
+import { CalendarClock, Users, MessageSquare, Video } from 'lucide-react';
 
 const BottomNavbar = () => {
   const location = useLocation();
@@ -25,9 +25,9 @@ const BottomNavbar = () => {
         <MessageSquare className="tab-icon text-white" />
         <span className="text-white">Agent</span>
       </Link>
-      <Link to="/automations" className={getLinkClass('/automations')}>
-        <Settings className="tab-icon" />
-        <span>Automations</span>
+      <Link to="/meetings" className={getLinkClass('/meetings')}>
+        <Video className="tab-icon" />
+        <span>Meetings</span>
       </Link>
     </div>
   );
