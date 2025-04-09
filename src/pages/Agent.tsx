@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import PageHeader from '@/components/layout/PageHeader';
 import BottomNavbar from '@/components/layout/BottomNavbar';
 import { Button } from '@/components/ui/button';
-import { Mic, Stop, Play, MessageSquare } from 'lucide-react';
+import { Mic, StopCircle, Play, MessageSquare } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 const Agent = () => {
