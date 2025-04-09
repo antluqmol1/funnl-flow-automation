@@ -1,19 +1,73 @@
 
 import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
 
-// Types based on the existing Supabase schema
-export type Contact = Database['public']['Tables']['contacts']['Row'];
-export type Task = Database['public']['Tables']['tasks']['Row'];
-export type FunnelStage = Database['public']['Tables']['funnel_stages']['Row'];
-export type Recording = Database['public']['Tables']['recordings']['Row'];
-export type Automation = Database['public']['Tables']['automations']['Row'];
+// Define interfaces for our data models
+export interface Contact {
+  id: string;
+  name: string;
+  company: string;
+  position: string;
+  email: string;
+  phone: string;
+  avatar: string | null;
+  status: 'prospect' | 'opportunity' | 'customer';
+  last_contact: string | null;
+  value: number | null;
+  probability: number | null;
+  tags: string[] | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  type: 'call' | 'email' | 'meeting' | 'follow-up' | 'other';
+  time: string;
+  contact_id: string | null;
+  status: 'pending' | 'completed' | 'overdue';
+  priority: 'high' | 'medium' | 'low';
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface FunnelStage {
+  id: string;
+  name: string;
+  position: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface Recording {
+  id: string;
+  title: string;
+  contact_id: string | null;
+  date: string;
+  duration: string;
+  transcription: string | null;
+  summary: string | null;
+  key_points: string[] | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface Automation {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  last_run: string | null;
+  tasks_completed: number | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
 
 // Contacts services
 export const getContacts = async (): Promise<Contact[]> => {
   const { data, error } = await supabase
     .from('contacts')
-    .select('*');
+    .select('*') as { data: Contact[] | null, error: any };
   
   if (error) {
     console.error('Error fetching contacts:', error);
@@ -28,7 +82,7 @@ export const getContactById = async (id: string): Promise<Contact | null> => {
     .from('contacts')
     .select('*')
     .eq('id', id)
-    .maybeSingle();
+    .maybeSingle() as { data: Contact | null, error: any };
   
   if (error) {
     console.error(`Error fetching contact with id ${id}:`, error);
@@ -42,7 +96,7 @@ export const getContactById = async (id: string): Promise<Contact | null> => {
 export const getTasks = async (): Promise<Task[]> => {
   const { data, error } = await supabase
     .from('tasks')
-    .select('*');
+    .select('*') as { data: Task[] | null, error: any };
   
   if (error) {
     console.error('Error fetching tasks:', error);
@@ -57,7 +111,7 @@ export const getFunnelStages = async (): Promise<FunnelStage[]> => {
   const { data, error } = await supabase
     .from('funnel_stages')
     .select('*')
-    .order('position', { ascending: true });
+    .order('position', { ascending: true }) as { data: FunnelStage[] | null, error: any };
   
   if (error) {
     console.error('Error fetching funnel stages:', error);
@@ -99,7 +153,7 @@ export const getFunnelStagesWithContacts = async () => {
 export const getRecordings = async (): Promise<Recording[]> => {
   const { data, error } = await supabase
     .from('recordings')
-    .select('*, contact:contacts(*)');
+    .select('*, contact:contacts(*)') as { data: (Recording & { contact: Contact })[] | null, error: any };
   
   if (error) {
     console.error('Error fetching recordings:', error);
@@ -114,7 +168,7 @@ export const getRecordingById = async (id: string) => {
     .from('recordings')
     .select('*, contact:contacts(*)')
     .eq('id', id)
-    .maybeSingle();
+    .maybeSingle() as { data: (Recording & { contact: Contact }) | null, error: any };
   
   if (error) {
     console.error(`Error fetching recording with id ${id}:`, error);
@@ -128,7 +182,7 @@ export const getRecordingById = async (id: string) => {
 export const getAutomations = async (): Promise<Automation[]> => {
   const { data, error } = await supabase
     .from('automations')
-    .select('*');
+    .select('*') as { data: Automation[] | null, error: any };
   
   if (error) {
     console.error('Error fetching automations:', error);
