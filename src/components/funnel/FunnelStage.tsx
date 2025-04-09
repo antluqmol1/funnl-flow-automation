@@ -1,7 +1,14 @@
 
 import React from 'react';
-import { FunnelStage as FunnelStageType } from '@/lib/dummyData';
 import ContactCard from './ContactCard';
+import { type Contact } from '@/services/supabaseService';
+
+interface FunnelStageType {
+  id: string;
+  name: string;
+  position: number;
+  contacts: Contact[];
+}
 
 interface FunnelStageProps {
   stage: FunnelStageType;

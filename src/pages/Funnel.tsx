@@ -1,27 +1,50 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useToast } from "@/components/ui/use-toast";
 import PageHeader from '@/components/layout/PageHeader';
 import BottomNavbar from '@/components/layout/BottomNavbar';
 import FunnelStage from '@/components/funnel/FunnelStage';
-import { funnelStages } from '@/lib/dummyData';
-import { Search, Filter } from 'lucide-react';
+import { Search } from 'lucide-react';
+import { getFunnelStagesWithContacts } from '@/services/supabaseService';
 
 const Funnel = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('all');
+  const [funnelStages, setFunnelStages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
   
   const filters = [
     { id: 'all', name: 'All' },
     { id: 'prospect', name: 'Prospect' },
-    { id: 'lead', name: 'Lead' },
     { id: 'opportunity', name: 'Opportunity' },
-    { id: 'negotiation', name: 'Negotiation' },
     { id: 'customer', name: 'Customer' }
   ];
 
+  useEffect(() => {
+    const loadFunnelStages = async () => {
+      try {
+        setLoading(true);
+        const data = await getFunnelStagesWithContacts();
+        setFunnelStages(data);
+      } catch (error) {
+        console.error('Failed to load funnel stages:', error);
+        toast({
+          title: "Error",
+          description: "Failed to load funnel data. Please try again.",
+          variant: "destructive",
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadFunnelStages();
+  }, [toast]);
+
   // Filter stages based on search query and selected filter
   const filteredStages = funnelStages.map(stage => {
-    const filteredContacts = stage.contacts.filter(contact => {
+    const filteredContacts = stage.contacts.filter((contact: any) => {
       const matchesSearch = 
         contact.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
         contact.company.toLowerCase().includes(searchQuery.toLowerCase());
@@ -77,16 +100,26 @@ const Funnel = () => {
           </div>
         </div>
         
-        {filteredStages.map(stage => (
-          stage.contacts.length > 0 && (
-            <FunnelStage key={stage.id} stage={stage} />
-          )
-        ))}
-        
-        {!filteredStages.some(stage => stage.contacts.length > 0) && (
-          <div className="text-center p-8 text-gray-500">
-            No contacts found matching your search.
+        {loading ? (
+          <div className="space-y-6">
+            <div className="animate-pulse bg-gray-100 h-32 rounded-lg"></div>
+            <div className="animate-pulse bg-gray-100 h-32 rounded-lg"></div>
+            <div className="animate-pulse bg-gray-100 h-32 rounded-lg"></div>
           </div>
+        ) : (
+          <>
+            {filteredStages.map(stage => (
+              stage.contacts.length > 0 && (
+                <FunnelStage key={stage.id} stage={stage} />
+              )
+            ))}
+            
+            {!filteredStages.some(stage => stage.contacts.length > 0) && (
+              <div className="text-center p-8 text-gray-500">
+                No contacts found matching your search.
+              </div>
+            )}
+          </>
         )}
       </div>
       

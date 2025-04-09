@@ -9,6 +9,90 @@ export type Json =
 export type Database = {
   public: {
     Tables: {
+      automations: {
+        Row: {
+          created_at: string | null
+          description: string
+          enabled: boolean
+          id: string
+          last_run: string | null
+          name: string
+          tasks_completed: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description: string
+          enabled?: boolean
+          id?: string
+          last_run?: string | null
+          name: string
+          tasks_completed?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string
+          enabled?: boolean
+          id?: string
+          last_run?: string | null
+          name?: string
+          tasks_completed?: number | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      contacts: {
+        Row: {
+          avatar: string | null
+          company: string
+          created_at: string | null
+          email: string
+          id: string
+          last_contact: string | null
+          name: string
+          phone: string
+          position: string
+          probability: number | null
+          status: string
+          tags: string[] | null
+          updated_at: string | null
+          value: number | null
+        }
+        Insert: {
+          avatar?: string | null
+          company: string
+          created_at?: string | null
+          email: string
+          id?: string
+          last_contact?: string | null
+          name: string
+          phone: string
+          position: string
+          probability?: number | null
+          status: string
+          tags?: string[] | null
+          updated_at?: string | null
+          value?: number | null
+        }
+        Update: {
+          avatar?: string | null
+          company?: string
+          created_at?: string | null
+          email?: string
+          id?: string
+          last_contact?: string | null
+          name?: string
+          phone?: string
+          position?: string
+          probability?: number | null
+          status?: string
+          tags?: string[] | null
+          updated_at?: string | null
+          value?: number | null
+        }
+        Relationships: []
+      }
       daily_activities: {
         Row: {
           created_at: string | null
@@ -76,6 +160,157 @@ export type Database = {
             columns: ["activity_id"]
             isOneToOne: false
             referencedRelation: "daily_activities"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      funnel_stages: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          position: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          name: string
+          position: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          position?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      recording_tasks: {
+        Row: {
+          created_at: string | null
+          id: string
+          recording_id: string | null
+          task_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          recording_id?: string | null
+          task_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          recording_id?: string | null
+          task_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recording_tasks_recording_id_fkey"
+            columns: ["recording_id"]
+            isOneToOne: false
+            referencedRelation: "recordings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recording_tasks_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recordings: {
+        Row: {
+          contact_id: string | null
+          created_at: string | null
+          date: string
+          duration: string
+          id: string
+          key_points: string[] | null
+          summary: string | null
+          title: string
+          transcription: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string | null
+          date: string
+          duration: string
+          id?: string
+          key_points?: string[] | null
+          summary?: string | null
+          title: string
+          transcription?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string | null
+          date?: string
+          duration?: string
+          id?: string
+          key_points?: string[] | null
+          summary?: string | null
+          title?: string
+          transcription?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recordings_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tasks: {
+        Row: {
+          contact_id: string | null
+          created_at: string | null
+          id: string
+          priority: string
+          status: string
+          time: string
+          title: string
+          type: string
+          updated_at: string | null
+        }
+        Insert: {
+          contact_id?: string | null
+          created_at?: string | null
+          id?: string
+          priority: string
+          status: string
+          time: string
+          title: string
+          type: string
+          updated_at?: string | null
+        }
+        Update: {
+          contact_id?: string | null
+          created_at?: string | null
+          id?: string
+          priority?: string
+          status?: string
+          time?: string
+          title?: string
+          type?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
             referencedColumns: ["id"]
           },
         ]

@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { Task } from '@/lib/dummyData';
 import { Phone, Mail, Users, Clock, AlertCircle } from 'lucide-react';
+import { type Task } from '@/services/supabaseService';
 
 interface TaskItemProps {
   task: Task;
@@ -59,7 +59,7 @@ const TaskItem: React.FC<TaskItemProps> = ({ task }) => {
           <h3 className="font-medium text-gray-800">{task.title}</h3>
           <span className="text-sm text-gray-500">{task.time}</span>
         </div>
-        <p className="text-sm text-gray-600">{task.contact.name} - {task.contact.company}</p>
+        <p className="text-sm text-gray-600">Task ID: {task.id.substring(0, 8)}</p>
         <div className="flex gap-2 mt-1">
           <span className={`funnl-badge ${getPriorityClass()}`}>
             {task.priority}

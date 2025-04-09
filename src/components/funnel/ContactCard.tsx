@@ -1,8 +1,8 @@
 
 import React from 'react';
-import { Contact } from '@/lib/dummyData';
 import { Phone, Mail, MessageSquare, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { type Contact } from '@/services/supabaseService';
 
 interface ContactCardProps {
   contact: Contact;
