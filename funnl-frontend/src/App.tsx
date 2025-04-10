@@ -1,9 +1,14 @@
-
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider } from './contexts/AuthContext'
+import LoginPage from './pages/auth/login'
+import RegisterPage from './pages/auth/register'
+import ResetPasswordPage from './pages/auth/reset-password'
+import VerifyEmailPage from './pages/auth/verify-email'
+import ProtectedRoute from './components/auth/ProtectedRoute'
 import Index from "./pages/Index";
 import Funnel from "./pages/Funnel";
 import Agent from "./pages/Agent";
@@ -12,6 +17,8 @@ import Meetings from "./pages/Meetings";
 import ContactDetail from "./pages/ContactDetail";
 import RecordingDetail from "./pages/RecordingDetail";
 import NotFound from "./pages/NotFound";
+import HubSpotCallback from "./pages/auth/hubspot-callback";
+import Settings from "./pages/Settings";
 
 const queryClient = new QueryClient();
 
@@ -20,18 +27,36 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/funnel" element={<Funnel />} />
-          <Route path="/agent" element={<Agent />} />
-          <Route path="/automations" element={<Automations />} />
-          <Route path="/meetings" element={<Meetings />} />
-          <Route path="/contact/:id" element={<ContactDetail />} />
-          <Route path="/recording/:id" element={<RecordingDetail />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
+      <AuthProvider>
+        <Router>
+          <Routes>
+            {/* Rutas públicas */}
+            <Route path="/" element={<Index />} />
+            <Route path="/funnel" element={<Funnel />} />
+
+            {/* Rutas de autenticación */}
+            <Route path="/auth/login" element={<LoginPage />} />
+            <Route path="/auth/register" element={<RegisterPage />} />
+            <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+            <Route path="/auth/hubspot-callback" element={<HubSpotCallback />} />
+            <Route path="/auth/hubspot/callback" element={<HubSpotCallback />} />
+
+            {/* Rutas protegidas */}
+            <Route path="/" element={<ProtectedRoute />}>
+              <Route path="agent" element={<Agent />} />
+              <Route path="automations" element={<Automations />} />
+              <Route path="meetings" element={<Meetings />} />
+              <Route path="settings" element={<Settings />} />
+              <Route path="contact/:id" element={<ContactDetail />} />
+              <Route path="recording/:id" element={<RecordingDetail />} />
+            </Route>
+
+            {/* Ruta 404 */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Router>
+      </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

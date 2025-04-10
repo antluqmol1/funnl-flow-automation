@@ -15,8 +15,26 @@ from hubspot.tickets import buscar_ticket_hubspot, obtener_ticket_hubspot
 from datetime import datetime, timedelta
 from collections import Counter
 import logging
+from fastapi import FastAPI
+from routers import hubspot
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
+
+# Crear la aplicación FastAPI
+app = FastAPI(title="MCP Server")
+
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080"],  # Origen del frontend
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos los métodos HTTP
+    allow_headers=["*"],  # Permite todos los headers
+)
+
+# Incluir los routers
+app.include_router(hubspot.router)
 
 mcp = FastMCP("funnl-tools", delimiter="\n")
 

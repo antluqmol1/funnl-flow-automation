@@ -57,7 +57,7 @@ uv venv
 source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 
 # Install dependencies
-uv add "mcp[cli]" httpx
+uv add "mcp[cli]" httpx fastapi supabase
 ```
 
 
