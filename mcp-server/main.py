@@ -15,27 +15,46 @@ from hubspot.tickets import buscar_ticket_hubspot, obtener_ticket_hubspot
 from datetime import datetime, timedelta
 from collections import Counter
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Request, status
 from routers import hubspot
 from fastapi.middleware.cors import CORSMiddleware
+import os
+from supabase import create_client, Client
+import httpx
+import secrets
+import uvicorn
+
+# Configurar logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
 # Crear la aplicación FastAPI
-app = FastAPI(title="MCP Server")
+app = FastAPI(
+    title="MCP SaaS Backend",
+    description="API Backend para MCP SaaS",
+    version="0.1.0"
+)
 
 # Configurar CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080"],  # Origen del frontend
+    allow_origins=["*"],  # En producción, limitar a orígenes específicos
     allow_credentials=True,
-    allow_methods=["*"],  # Permite todos los métodos HTTP
-    allow_headers=["*"],  # Permite todos los headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Configuración de Supabase
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Incluir los routers
 app.include_router(hubspot.router)
 
+# Crear la instancia de FastMCP
 mcp = FastMCP("funnl-tools", delimiter="\n")
 
 # Registro de herramientas para contactos
@@ -256,5 +275,118 @@ def analyze_time_patterns(activities: list) -> dict:
         logging.error(f"Error en análisis temporal: {str(e)}")
         return {}
 
+@app.get("/")
+def read_root():
+    """
+    Endpoint raíz para verificar que la API está funcionando.
+    """
+    return {"status": "ok", "message": "MCP SaaS Backend API is running"}
+
+@app.post("/migrations/add-hubspot-fields")
+async def add_hubspot_fields():
+    """
+    Migración para añadir campos relacionados con HubSpot a la tabla de tareas.
+    """
+    table_name = "tasks"
+    # Nombres correctos para las columnas de HubSpot
+    hubspot_id_col = "hubspot_id"
+    hubspot_type_col = "hubspot_type"
+    
+    try:
+        # Verificar si las columnas existen
+        try:
+            supabase.table(table_name).select(hubspot_id_col).limit(1).execute()
+            logger.info(f"La columna {hubspot_id_col} ya existe en {table_name}")
+            return {"status": "info", "message": f"Los campos de HubSpot ya existen en la tabla {table_name}"}
+        except Exception as e:
+            # Si la columna no existe, el error debería contener 'column does not exist'
+            if "column" in str(e) and "does not exist" in str(e):
+                # Usar SQL directamente para añadir las columnas
+                query = f"""
+                ALTER TABLE {table_name} 
+                ADD COLUMN IF NOT EXISTS {hubspot_id_col} TEXT,
+                ADD COLUMN IF NOT EXISTS {hubspot_type_col} TEXT,
+                ADD COLUMN IF NOT EXISTS hubspot_owner TEXT,
+                ADD COLUMN IF NOT EXISTS hubspot_status TEXT,
+                ADD COLUMN IF NOT EXISTS hubspot_last_synced TIMESTAMP WITH TIME ZONE,
+                ADD COLUMN IF NOT EXISTS sync_status TEXT
+                """
+                
+                # Ejecutar SQL directo a través de Supabase
+                try:
+                    supabase.query(query).execute()
+                    logger.info(f"Columnas de HubSpot añadidas a {table_name}")
+                    return {"status": "success", "message": f"Campos de HubSpot añadidos a {table_name}"}
+                except Exception as sql_error:
+                    logger.error(f"Error ejecutando SQL para añadir columnas: {sql_error}")
+                    return {"status": "error", "message": f"Error añadiendo columnas: {str(sql_error)}"}
+            else:
+                # Otro error inesperado
+                logger.error(f"Error verificando columna {hubspot_id_col} en {table_name}: {e}")
+                return {"status": "error", "message": f"Error verificando tabla: {str(e)}"}
+    
+    except Exception as e:
+        logger.error(f"Error general en migración: {str(e)}")
+        return {"status": "error", "message": f"Error al ejecutar la migración: {str(e)}"}
+
+@app.post("/migrations/add-hubspot-fields-contacts")
+async def add_hubspot_fields_contacts():
+    """
+    Migración para añadir campos relacionados con HubSpot a la tabla de contactos.
+    """
+    table_name = "contacts"
+    # Nombres correctos para las columnas de HubSpot
+    hubspot_id_col = "hubspot_id"
+    hubspot_type_col = "hubspot_type"
+    
+    try:
+        # Verificar si las columnas existen
+        try:
+            supabase.table(table_name).select(hubspot_id_col).limit(1).execute()
+            logger.info(f"La columna {hubspot_id_col} ya existe en {table_name}")
+            return {"status": "info", "message": f"Los campos de HubSpot ya existen en la tabla {table_name}"}
+        except Exception as e:
+            # Si la columna no existe, el error debería contener 'column does not exist'
+            if "column" in str(e) and "does not exist" in str(e):
+                # Usar SQL directamente para añadir las columnas
+                query = f"""
+                ALTER TABLE {table_name} 
+                ADD COLUMN IF NOT EXISTS {hubspot_id_col} TEXT,
+                ADD COLUMN IF NOT EXISTS {hubspot_type_col} TEXT
+                """
+                
+                # Ejecutar SQL directo a través de Supabase
+                try:
+                    supabase.query(query).execute()
+                    logger.info(f"Columnas de HubSpot añadidas a {table_name}")
+                    return {"status": "success", "message": f"Campos de HubSpot añadidos a {table_name}"}
+                except Exception as sql_error:
+                    logger.error(f"Error ejecutando SQL para añadir columnas: {sql_error}")
+                    return {"status": "error", "message": f"Error añadiendo columnas: {str(sql_error)}"}
+            else:
+                # Otro error inesperado
+                logger.error(f"Error verificando columna {hubspot_id_col} en {table_name}: {e}")
+                return {"status": "error", "message": f"Error verificando tabla: {str(e)}"}
+    
+    except Exception as e:
+        logger.error(f"Error general en migración: {str(e)}")
+        return {"status": "error", "message": f"Error al ejecutar la migración: {str(e)}"}
+
+# Punto de entrada para ejecutar el servidor
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    # Obtener el puerto desde variable de entorno o usar 8000 por defecto
+    port = int(os.getenv("PORT", 8000))
+    
+    # Ejecutar ambos servidores
+    print(f"Iniciando servidor MCP en puerto estándar y FastAPI en puerto {port}...")
+    
+    # Iniciar FastAPI con uvicorn
+    # Esto se ejecutará en un hilo separado
+    uvicorn_config = uvicorn.Config(app=app, host="0.0.0.0", port=port)
+    uvicorn_server = uvicorn.Server(config=uvicorn_config)
+    
+    # Crear una tarea para ejecutar uvicorn
+    asyncio.create_task(uvicorn_server.serve())
+    
+    # Ejecutar el servidor MCP (bloqueante, debe ser lo último)
+    mcp.run()

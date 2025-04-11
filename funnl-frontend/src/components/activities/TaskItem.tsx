@@ -1,13 +1,25 @@
-
 import React from 'react';
-import { Phone, Mail, Users, Clock, AlertCircle } from 'lucide-react';
+import { Phone, Mail, Users, Clock, AlertCircle, LinkIcon, ArrowUpDown } from 'lucide-react';
 import { type Task } from '@/services/supabaseService';
+import HubspotSyncButton from './HubspotSyncButton';
 
 interface TaskItemProps {
   task: Task;
+  showSyncButton?: boolean;
 }
 
-const TaskItem: React.FC<TaskItemProps> = ({ task }) => {
+const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
+  // Comprobamos que los campos de HubSpot existan, si no, los inicializamos como null
+  const safeTask = {
+    ...task,
+    hubspot_id: task.hubspot_id || null,
+    hubspot_type: task.hubspot_type || null,
+    hubspot_status: task.hubspot_status || null,
+    hubspot_owner: task.hubspot_owner || null,
+    hubspot_last_synced: task.hubspot_last_synced || null,
+    sync_status: task.sync_status || null
+  };
+  
   const getTypeIcon = () => {
     switch (task.type) {
       case 'call':
@@ -49,6 +61,53 @@ const TaskItem: React.FC<TaskItemProps> = ({ task }) => {
     }
   };
 
+  const getSyncStatusClass = () => {
+    switch (safeTask.sync_status) {
+      case 'synced':
+        return 'text-green-500';
+      case 'pending':
+        return 'text-yellow-500';
+      case 'error':
+        return 'text-red-500';
+      default:
+        return 'text-gray-500';
+    }
+  };
+
+  const getHubspotTypeLabel = () => {
+    if (!safeTask.hubspot_type) return '';
+    
+    switch (safeTask.hubspot_type) {
+      case 'deal':
+        return 'Deal';
+      case 'ticket':
+        return 'Ticket';
+      case 'contact':
+        return 'Contacto';
+      case 'company':
+        return 'Empresa';
+      default:
+        return '';
+    }
+  };
+
+  // Formatear la fecha de última sincronización
+  const formatSyncDate = (dateString: string | null) => {
+    if (!dateString) return '';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleString('es-ES', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return '';
+    }
+  };
+
   return (
     <div className="funnl-item flex items-center">
       <div className="mr-3 flex-shrink-0">
@@ -67,7 +126,63 @@ const TaskItem: React.FC<TaskItemProps> = ({ task }) => {
           <span className={`funnl-badge ${getStatusClass()}`}>
             {task.status}
           </span>
+          
+          {/* HubSpot related information */}
+          {safeTask.hubspot_id && (
+            <span className="funnl-badge funnl-badge-dark flex items-center gap-1">
+              <LinkIcon size={12} />
+              {getHubspotTypeLabel()}
+            </span>
+          )}
+          
+          {/* No mostramos este indicador si estamos mostrando el botón de sync */}
+          {!showSyncButton && safeTask.sync_status && (
+            <span className={`text-xs font-medium flex items-center gap-1 ${getSyncStatusClass()}`}>
+              <ArrowUpDown size={12} />
+              {safeTask.sync_status === 'synced' 
+                ? 'Sincronizado' 
+                : safeTask.sync_status === 'pending' 
+                  ? 'Pendiente' 
+                  : 'Error'}
+            </span>
+          )}
         </div>
+        
+        {/* Mostrar más información si hay datos de HubSpot */}
+        {safeTask.hubspot_id && (
+          <div className="mt-2 grid grid-cols-2 gap-x-4 text-xs text-gray-500">
+            {/* Estado en HubSpot */}
+            {safeTask.hubspot_status && (
+              <div>
+                <span className="font-medium">Estado: </span>
+                {safeTask.hubspot_status}
+              </div>
+            )}
+            
+            {/* Propietario en HubSpot */}
+            {safeTask.hubspot_owner && (
+              <div>
+                <span className="font-medium">Propietario: </span>
+                {safeTask.hubspot_owner}
+              </div>
+            )}
+            
+            {/* Última sincronización */}
+            {safeTask.hubspot_last_synced && (
+              <div className="col-span-2 mt-1">
+                <span className="font-medium">Actualizado: </span>
+                {formatSyncDate(safeTask.hubspot_last_synced)}
+              </div>
+            )}
+          </div>
+        )}
+        
+        {/* Mostrar botón de sincronización cuando sea necesario */}
+        {showSyncButton && safeTask.hubspot_id && (
+          <div className="mt-2">
+            <HubspotSyncButton task={safeTask} />
+          </div>
+        )}
       </div>
     </div>
   );

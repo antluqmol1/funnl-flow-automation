@@ -1,0 +1,18 @@
+# Requisitos principales
+fastapi>=0.115.0
+uvicorn>=0.27.0
+mcp[cli]>=1.6.0
+supabase>=2.15.0
+python-dotenv>=1.0.0
+httpx>=0.28.0
+
+# Integración con HubSpot
+# Instalado con: uv add hubspot-api-client
+# NOTA: La estructura de la API cambia significativamente entre versiones
+# - 8.2.2: Version original (contiene CollectionResponseSimplePublicObject)
+# - 11.1.0: Version actual (estructura API diferente)
+hubspot-api-client==11.1.0
+
+# Utilidades
+python-multipart>=0.0.7
+pydantic>=2.7.0 
