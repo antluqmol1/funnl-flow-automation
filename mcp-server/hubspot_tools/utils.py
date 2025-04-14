@@ -71,19 +71,39 @@ def log_sync_operation(operation: str, object_type: str, object_id: str, success
     except Exception as e:
         logger.error(f"Error registrando operación: {e}")
 
-def format_error_response(error_message: str, status_code: int = 400) -> Dict[str, Any]:
+def format_error_response(error: Any, status_code: int = 400) -> Dict[str, Any]:
     """
-    Formatea una respuesta de error para las APIs.
+    Formatea una respuesta de error para las APIs, asegurando que cualquier tipo
+    de error pueda ser convertido a JSON.
     
     Args:
-        error_message: Mensaje de error
+        error: Mensaje de error o excepción
         status_code: Código de estado HTTP
         
     Returns:
         Dict: Respuesta formateada
     """
-    return {
-        "success": False,
-        "error": error_message,
-        "status_code": status_code
-    } 
+    # Convertir diferentes tipos de errores a string para asegurar serialización JSON
+    try:
+        if isinstance(error, Exception):
+            error_message = f"{type(error).__name__}: {str(error)}"
+        elif isinstance(error, (dict, list, str, int, float, bool, type(None))):
+            # Estos tipos son JSON-serializables directamente
+            error_message = error
+        else:
+            # Para cualquier otro tipo, convertir a string
+            error_message = str(error)
+            
+        return {
+            "success": False,
+            "error": error_message,
+            "status_code": status_code
+        }
+    except Exception as e:
+        # Fallback seguro en caso de cualquier problema en el formato
+        logger.error(f"Error formateando respuesta de error: {e}")
+        return {
+            "success": False,
+            "error": "Error interno al procesar respuesta",
+            "status_code": 500
+        } 

@@ -106,8 +106,41 @@ export const useSyncTaskWithHubspotMutation = () => {
                         hubspot_last_synced: new Date().toISOString(),
                     });
 
-                    // Llamamos a la API del servidor para sincronizar con HubSpot
-                    const response = await fetch(`${API_URL}/hubspot/sync`, {
+                    // 1. Primero obtener la tarea completa de Supabase
+                    const taskData = await getTaskById(taskId);
+                    if (!taskData) {
+                        throw new Error('No se pudo encontrar la tarea en Supabase');
+                    }
+
+                    // 2. Sincronizar la tarea con HubSpot (primero enviar a HubSpot)
+                    // Preparar datos para enviar a HubSpot
+                    const hubspotTaskData = {
+                        taskId,
+                        hubspotId,
+                        hubspotType,
+                        title: taskData.title,
+                        status: taskData.status,
+                        priority: taskData.priority,
+                        time: taskData.time
+                    };
+
+                    // Enviar datos a HubSpot
+                    const updateHubspotResponse = await fetch(`${API_URL}/hubspot/update-task`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${session.access_token}`,
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(hubspotTaskData)
+                    });
+
+                    if (!updateHubspotResponse.ok) {
+                        const errorData = await updateHubspotResponse.json();
+                        throw new Error(errorData.detail || errorData.message || 'Error actualizando la tarea en HubSpot');
+                    }
+
+                    // 3. Sincronizar los datos del objeto relacionado de HubSpot
+                    const syncResponse = await fetch(`${API_URL}/hubspot/sync`, {
                         method: 'POST',
                         headers: {
                             'Authorization': `Bearer ${session.access_token}`,
@@ -120,13 +153,13 @@ export const useSyncTaskWithHubspotMutation = () => {
                         })
                     });
 
-                    if (!response.ok) {
-                        const errorData = await response.json();
+                    if (!syncResponse.ok) {
+                        const errorData = await syncResponse.json();
                         throw new Error(errorData.detail || errorData.message || 'Error sincronizando con HubSpot');
                     }
 
                     // Analizamos la respuesta, con verificación de estructura
-                    const responseData = await response.json();
+                    const responseData = await syncResponse.json();
 
                     // Verificamos que la estructura de la respuesta sea la esperada
                     const hubspotData = responseData.data || responseData;

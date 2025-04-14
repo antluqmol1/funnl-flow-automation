@@ -19,6 +19,7 @@ import RecordingDetail from "./pages/RecordingDetail";
 import NotFound from "./pages/NotFound";
 import HubSpotCallback from "./pages/auth/hubspot-callback";
 import Settings from "./pages/Settings";
+import DashboardPage from "./pages/dashboard";
 
 const queryClient = new QueryClient();
 
@@ -44,6 +45,7 @@ const App = () => (
 
             {/* Rutas protegidas */}
             <Route path="/" element={<ProtectedRoute />}>
+              <Route path="dashboard" element={<DashboardPage />} />
               <Route path="agent" element={<Agent />} />
               <Route path="automations" element={<Automations />} />
               <Route path="meetings" element={<Meetings />} />

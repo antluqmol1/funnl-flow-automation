@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { CalendarClock, Users, MessageSquare, Video } from 'lucide-react';
@@ -15,7 +14,7 @@ const BottomNavbar = () => {
     <div className="bottom-tabs">
       <Link to="/" className={getLinkClass('/')}>
         <CalendarClock className="tab-icon" />
-        <span>Activities</span>
+        <span>Daily</span>
       </Link>
       <Link to="/funnel" className={getLinkClass('/funnel')}>
         <Users className="tab-icon" />

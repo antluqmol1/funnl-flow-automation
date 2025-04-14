@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import React, { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useForm } from 'react-hook-form';
 import { z } from 'zod';
+import { Calendar } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Form,
   FormControl,
@@ -9,21 +12,19 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  FormDescription,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
-import { useToast } from '@/components/ui/use-toast';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { cn } from '@/lib/utils';
+import { Calendar as CalendarComponent } from '@/components/ui/calendar';
+import { format } from 'date-fns';
 import { type Task } from '@/services/supabaseService';
 import { useCreateTaskMutation, useUpdateTaskMutation } from '@/hooks/useTasks';
+import { useToast } from '@/components/ui/use-toast';
+import HubspotObjectSelector from "./HubspotObjectSelector";
 
 interface TaskFormProps {
   task?: Task;
@@ -41,7 +42,6 @@ const taskSchema = z.object({
   link_to_hubspot: z.boolean().default(false),
   hubspot_id: z.string().nullable().optional(),
   hubspot_type: z.enum(['deal', 'ticket', 'contact', 'company']).nullable().optional(),
-  hubspot_status: z.string().nullable().optional(),
 });
 
 type TaskFormValues = z.infer<typeof taskSchema>;
@@ -64,8 +64,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       priority: task.priority,
       link_to_hubspot: !!task.hubspot_id,
       hubspot_id: task.hubspot_id,
-      hubspot_type: task.hubspot_type,
-      hubspot_status: task.hubspot_status,
+      hubspot_type: task.hubspot_type
     } : {
       title: '',
       type: 'call',
@@ -75,8 +74,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       priority: 'medium',
       link_to_hubspot: false,
       hubspot_id: null,
-      hubspot_type: null,
-      hubspot_status: null,
+      hubspot_type: null
     },
   });
 
@@ -86,7 +84,8 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       if (!values.link_to_hubspot) {
         values.hubspot_id = null;
         values.hubspot_type = null;
-        values.hubspot_status = null;
+      } else if (values.hubspot_id && values.hubspot_type) {
+        console.log(`Vinculando tarea con objeto de HubSpot: ${values.hubspot_type} (ID: ${values.hubspot_id})`);
       }
       
       // Omitimos el campo link_to_hubspot ya que no es parte del modelo Task
@@ -133,7 +132,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
     if (!checked) {
       form.setValue('hubspot_id', null);
       form.setValue('hubspot_type', null);
-      form.setValue('hubspot_status', null);
     }
   };
 
@@ -269,7 +267,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
               <div className="space-y-1 leading-none">
                 <FormLabel>Vincular con HubSpot</FormLabel>
                 <p className="text-sm text-gray-500">
-                  Relaciona esta tarea con un objeto de HubSpot
+                  Relaciona esta tarea con un objeto de HubSpot, te permitirá buscar por nombre en lugar de usar el ID
                 </p>
               </div>
             </FormItem>
@@ -285,59 +283,33 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
               name="hubspot_type"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Tipo de objeto</FormLabel>
-                  <Select
-                    onValueChange={field.onChange}
-                    defaultValue={field.value || undefined}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Seleccionar tipo de objeto" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="deal">Deal</SelectItem>
-                      <SelectItem value="ticket">Ticket</SelectItem>
-                      <SelectItem value="contact">Contacto</SelectItem>
-                      <SelectItem value="company">Empresa</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="hubspot_id"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>ID de HubSpot</FormLabel>
+                  <FormLabel>Objeto en HubSpot</FormLabel>
                   <FormControl>
-                    <Input 
-                      placeholder="ID del objeto en HubSpot" 
-                      {...field} 
-                      value={field.value || ''} 
+                    <HubspotObjectSelector
+                      objectType={field.value as any || 'contact'}
+                      onSelect={(object) => {
+                        if (object) {
+                          form.setValue('hubspot_type', object.type);
+                          form.setValue('hubspot_id', object.id);
+                        } else {
+                          form.setValue('hubspot_type', null);
+                          form.setValue('hubspot_id', null);
+                        }
+                      }}
+                      selectedObject={
+                        field.value && form.getValues('hubspot_id')
+                          ? {
+                              id: form.getValues('hubspot_id') || '',
+                              name: `ID: ${form.getValues('hubspot_id')}`, // Mostramos el ID si no tenemos el nombre
+                              type: field.value as any,
+                            }
+                          : null
+                      }
                     />
                   </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="hubspot_status"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Estado en HubSpot</FormLabel>
-                  <FormControl>
-                    <Input 
-                      placeholder="Estado del objeto en HubSpot" 
-                      {...field} 
-                      value={field.value || ''} 
-                    />
-                  </FormControl>
+                  <FormDescription>
+                    Selecciona el objeto de HubSpot al que deseas vincular esta tarea
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

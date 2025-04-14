@@ -2,6 +2,7 @@ import React from 'react';
 import { Phone, Mail, Users, Clock, AlertCircle, LinkIcon, ArrowUpDown } from 'lucide-react';
 import { type Task } from '@/services/supabaseService';
 import HubspotSyncButton from './HubspotSyncButton';
+import PriorityBadge from '@/components/shared/PriorityBadge';
 
 interface TaskItemProps {
   task: Task;
@@ -32,19 +33,6 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
         return <Clock className="h-4 w-4 text-orange-500" />;
       default:
         return <AlertCircle className="h-4 w-4 text-gray-500" />;
-    }
-  };
-
-  const getPriorityClass = () => {
-    switch (task.priority) {
-      case 'high':
-        return 'funnl-badge-danger';
-      case 'medium':
-        return 'funnl-badge-warning';
-      case 'low':
-        return 'funnl-badge-info';
-      default:
-        return 'funnl-badge-info';
     }
   };
 
@@ -120,9 +108,10 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
         </div>
         <p className="text-sm text-gray-600">Task ID: {task.id.substring(0, 8)}</p>
         <div className="flex gap-2 mt-1">
-          <span className={`funnl-badge ${getPriorityClass()}`}>
-            {task.priority}
-          </span>
+          <PriorityBadge 
+            priority={task.priority as 'high' | 'medium' | 'low'} 
+            className="text-xs" 
+          />
           <span className={`funnl-badge ${getStatusClass()}`}>
             {task.status}
           </span>

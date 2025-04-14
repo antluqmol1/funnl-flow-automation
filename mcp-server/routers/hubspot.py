@@ -110,6 +110,11 @@ class VerifyApiKeyRequest(BaseModel):
     """Modelo para verificar API key de HubSpot"""
     apiKey: str
 
+class SearchRequest(BaseModel):
+    """Modelo para solicitudes de búsqueda en HubSpot"""
+    type: str  # 'deal', 'contact', 'ticket', 'company'
+    query: str  # Término de búsqueda
+
 @router.post("/verify")
 async def verify_api_key(
     request: VerifyApiKeyRequest,
@@ -713,37 +718,568 @@ async def sync_all_hubspot_data(user_id: str = Depends(get_current_user)):
 @router.post("/disconnect")
 async def disconnect_hubspot(user_id: str = Depends(get_current_user)):
     """
-    Desconecta la cuenta de HubSpot para el usuario actual eliminando la integración.
+    Desconecta la cuenta de HubSpot eliminando la integración.
     """
-    logger.info(f"Iniciando desconexión de HubSpot para usuario: {user_id}")
     try:
         # Eliminar la integración de la base de datos
-        delete_response = supabase.table("user_integrations")\
-            .delete()\
-            .eq("user_id", user_id)\
-            .eq("provider", "hubspot")\
-            .execute()
-
-        # Aunque `delete` no siempre devuelve datos útiles, podemos verificar si algo se eliminó
-        # basándonos en si hubo error o no (Supabase client podría mejorar esto)
-        # Por ahora, asumimos éxito si no hay excepción.
+        response = supabase.table("user_integrations").delete().eq("user_id", user_id).eq("provider", "hubspot").execute()
         
-        logger.info(f"Respuesta de Supabase al eliminar integración para {user_id}: {delete_response.data}")
-
-        # Opcional: Invalidar caché local si existe
-        # (Depende de si se usa caché para la API key)
-        if hasattr(hubspot_sync, "_api_keys") and user_id in hubspot_sync._api_keys:
-             del hubspot_sync._api_keys[user_id]
-             logger.info(f"Clave API en memoria eliminada para {user_id}")
-
+        if not response.data or len(response.data) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No se encontró integración con HubSpot"
+            )
+        
+        # Limpiar el caché específico del usuario
+        user_cache_keys = []
+        for key in hubspot_cache.cache.keys():
+            if key.startswith(f"{user_id}_"):
+                user_cache_keys.append(key)
+        
+        for key in user_cache_keys:
+            await hubspot_cache.delete(key)
+        
         log_sync_operation("disconnect", "integration", user_id, success=True)
-        return {"status": "success", "message": "Cuenta de HubSpot desconectada correctamente."}
-
+        
+        return {
+            "status": "success",
+            "message": "Desconectado de HubSpot correctamente"
+        }
     except Exception as e:
-        error_detail = format_error_response(e)
-        logger.error(f"Error desconectando HubSpot para {user_id}: {error_detail}")
-        log_sync_operation("disconnect", "integration", user_id, success=False, error=error_detail)
+        log_sync_operation("disconnect", "integration", user_id, success=False, error=str(e))
+        
+        if isinstance(e, HTTPException):
+            raise e
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error al desconectar la cuenta: {error_detail}"
+            detail=format_error_response(e)
+        )
+
+class TaskUpdateRequest(BaseModel):
+    """Modelo para solicitudes de actualización de tareas en HubSpot"""
+    taskId: str
+    hubspotId: str
+    hubspotType: str
+    title: str
+    status: str
+    priority: str
+    time: str
+
+@router.post("/update-task")
+async def update_task_in_hubspot(
+    request: TaskUpdateRequest,
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Actualiza una tarea en HubSpot.
+    """
+    try:
+        # Obtener la API key del usuario
+        api_key = await get_user_api_key(user_id)
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="HubSpot no está configurado para este usuario"
+            )
+
+        # Asegurarse de que la API key esté configurada en el sincronizador
+        await hubspot_sync.set_api_key(user_id, api_key)
+
+        # Convertir datos de la tarea al formato esperado por HubSpot
+        # La estructura dependerá del tipo de objeto en HubSpot
+        properties = {
+            "hs_task_subject": request.title,
+            "hs_task_status": "COMPLETED" if request.status == "completed" else "NOT_STARTED",
+            "hs_task_priority": request.priority.upper()
+        }
+
+        # Si hay una fecha/hora específica
+        if request.time and request.time != "any":
+            try:
+                # Intentar convertir a timestamp para HubSpot
+                time_obj = datetime.fromisoformat(request.time.replace('Z', '+00:00'))
+                properties["hs_timestamp"] = str(int(time_obj.timestamp() * 1000))
+            except ValueError:
+                # Si no es un formato ISO, dejarlo como está
+                properties["hs_task_body"] = f"Programado para: {request.time}"
+
+        # Determinar la API a usar según el tipo de objeto
+        endpoint = None
+        if request.hubspotType == "contact":
+            endpoint = f"https://api.hubapi.com/crm/v3/objects/contacts/{request.hubspotId}/associations/tasks/{request.taskId}"
+        elif request.hubspotType == "deal":
+            endpoint = f"https://api.hubapi.com/crm/v3/objects/deals/{request.hubspotId}/associations/tasks/{request.taskId}"
+        elif request.hubspotType == "company":
+            endpoint = f"https://api.hubapi.com/crm/v3/objects/companies/{request.hubspotId}/associations/tasks/{request.taskId}"
+        elif request.hubspotType == "ticket":
+            endpoint = f"https://api.hubapi.com/crm/v3/objects/tickets/{request.hubspotId}/associations/tasks/{request.taskId}"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tipo de objeto inválido: {request.hubspotType}"
+            )
+
+        # Primero intentamos actualizar la tarea en HubSpot
+        task_endpoint = f"https://api.hubapi.com/crm/v3/objects/tasks/{request.taskId}"
+        async with httpx.AsyncClient() as client:
+            # Si la tarea no existe en HubSpot, la creamos primero
+            try:
+                update_response = await client.patch(
+                    task_endpoint,
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"properties": properties}
+                )
+                
+                if update_response.status_code == 404:
+                    # La tarea no existe, necesitamos crearla
+                    create_response = await client.post(
+                        "https://api.hubapi.com/crm/v3/objects/tasks",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"properties": properties}
+                    )
+                    
+                    if create_response.status_code != 201:
+                        error_data = create_response.json()
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Error al crear tarea en HubSpot: {error_data.get('message', str(create_response.status_code))}"
+                        )
+                    
+                    # Si se creó correctamente, obtenemos el ID de la tarea para asociarla
+                    task_data = create_response.json()
+                    hubspot_task_id = task_data.get("id")
+                    logger.info(f"Tarea creada correctamente. ID de HubSpot: {hubspot_task_id}, ID original: {request.taskId}")
+                    
+                    # Ahora asociamos la tarea al objeto correspondiente
+                    # IMPORTANTE: Usar el ID de HubSpot, no el ID original
+                    association_endpoint = None
+                    if request.hubspotType == "contact":
+                        association_endpoint = f"https://api.hubapi.com/crm/v3/objects/tasks/{hubspot_task_id}/associations/contacts/{request.hubspotId}"
+                    elif request.hubspotType == "deal":
+                        association_endpoint = f"https://api.hubapi.com/crm/v3/objects/tasks/{hubspot_task_id}/associations/deals/{request.hubspotId}"
+                    elif request.hubspotType == "company":
+                        association_endpoint = f"https://api.hubapi.com/crm/v3/objects/tasks/{hubspot_task_id}/associations/companies/{request.hubspotId}"
+                    elif request.hubspotType == "ticket":
+                        association_endpoint = f"https://api.hubapi.com/crm/v3/objects/tasks/{hubspot_task_id}/associations/tickets/{request.hubspotId}"
+                    
+                    logger.info(f"Asociando tarea {hubspot_task_id} con objeto {request.hubspotType} {request.hubspotId}...")
+                    logger.info(f"Endpoint para asociación: {association_endpoint}")
+                    
+                    # Intentamos usar la API de asociaciones correcta según la documentación de HubSpot
+                    # https://developers.hubspot.com/docs/api/crm/associations
+                    try:
+                        # Utilizamos POST con categoryId y typeId
+                        association_data = {
+                            "category": "HUBSPOT_DEFINED",
+                            "typeId": 808  # Código específico para tarea -> contacto
+                        }
+                        
+                        association_response = await client.put(
+                            association_endpoint,
+                            headers={
+                                "Authorization": f"Bearer {api_key}",
+                                "Content-Type": "application/json",
+                            },
+                            json=association_data
+                        )
+                        
+                        # Si falla con PUT, intentamos con POST en la misma API v3
+                        if association_response.status_code == 404:
+                            logger.info("API v3 con PUT no funcionó, intentando con POST...")
+                            association_response = await client.post(
+                                association_endpoint,
+                                headers={
+                                    "Authorization": f"Bearer {api_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                json=association_data
+                            )
+                        
+                        # Si sigue fallando, intentamos con el enfoque antiguo (simple, sin payload)
+                        if association_response.status_code not in (200, 201, 204):
+                            logger.info("Intentando con API v3 específica para tareas...")
+                            
+                            # Usar el endpoint específico para asociar tareas según la documentación oficial
+                            # https://developers.hubspot.com/docs/reference/api/crm/engagements/tasks
+                            
+                            # Para tareas en HubSpot, necesitamos usar un formato específico
+                            assoc_type = "HUBSPOT_DEFINED"
+                            task_assoc_endpoint = f"https://api.hubapi.com/crm/v3/associations/task/contact/batch/create"
+                            
+                            if request.hubspotType == "deal":
+                                task_assoc_endpoint = f"https://api.hubapi.com/crm/v3/associations/task/deal/batch/create"
+                            elif request.hubspotType == "company":
+                                task_assoc_endpoint = f"https://api.hubapi.com/crm/v3/associations/task/company/batch/create"
+                            elif request.hubspotType == "ticket":
+                                task_assoc_endpoint = f"https://api.hubapi.com/crm/v3/associations/task/ticket/batch/create"
+                            
+                            # El payload es diferente para el endpoint específico de tareas
+                            task_assoc_payload = {
+                                "inputs": [
+                                    {
+                                        "from": {"id": hubspot_task_id},
+                                        "to": {"id": request.hubspotId},
+                                        "type": "task_to_contact"
+                                    }
+                                ]
+                            }
+                            
+                            # Ajustar el tipo de asociación según el tipo de objeto
+                            if request.hubspotType == "deal":
+                                task_assoc_payload["inputs"][0]["type"] = "task_to_deal"
+                            elif request.hubspotType == "company":
+                                task_assoc_payload["inputs"][0]["type"] = "task_to_company"
+                            elif request.hubspotType == "ticket":
+                                task_assoc_payload["inputs"][0]["type"] = "task_to_ticket"
+                            
+                            logger.info(f"Endpoint de asociación de tarea: {task_assoc_endpoint}")
+                            logger.info(f"Payload de asociación de tarea: {task_assoc_payload}")
+                            
+                            association_response = await client.post(
+                                task_assoc_endpoint,
+                                headers={
+                                    "Authorization": f"Bearer {api_key}",
+                                    "Content-Type": "application/json",
+                                },
+                                json=task_assoc_payload
+                            )
+                            
+                            # Si sigue fallando, probamos con la API básica (legacy) de tareas
+                            if association_response.status_code not in (200, 201, 204):
+                                logger.info("Intentando con API de engagements (legacy)...")
+                                engagement_endpoint = f"https://api.hubapi.com/engagements/v1/engagements/tasks/{hubspot_task_id}/associations/{request.hubspotType}s/{request.hubspotId}"
+                                
+                                association_response = await client.put(
+                                    engagement_endpoint,
+                                    headers={
+                                        "Authorization": f"Bearer {api_key}",
+                                        "Content-Type": "application/json",
+                                    }
+                                )
+                    
+                        logger.info(f"Respuesta de asociación: Status {association_response.status_code}")
+                        
+                        if association_response.status_code not in (200, 201, 204):
+                            # Manejar la respuesta de forma más segura
+                            error_msg = f"Status code: {association_response.status_code}"
+                            try:
+                                # Intentar obtener el contenido de la respuesta como JSON
+                                if association_response.content and len(association_response.content.strip()) > 0:
+                                    error_data = association_response.json()
+                                    if isinstance(error_data, dict) and "message" in error_data:
+                                        error_msg = error_data["message"]
+                                    else:
+                                        error_msg = str(error_data)
+                                    logger.error(f"Error al asociar tarea: {error_msg}")
+                                else:
+                                    logger.error(f"Respuesta vacía con código de estado: {association_response.status_code}")
+                            except Exception as parse_error:
+                                # En caso de error al parsear JSON o cualquier otro problema
+                                logger.error(f"No se pudo parsear la respuesta como JSON: {str(parse_error)}")
+                                logger.error(f"Contenido de la respuesta: {association_response.content[:500] if association_response.content else 'Vacío'}")
+                                
+                            # Construir un mensaje de error informativo
+                            error_detail = f"Error al asociar tarea en HubSpot (Status {association_response.status_code}): {error_msg}"
+                            raise HTTPException(
+                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                                detail=error_detail
+                            )
+                    except httpx.RequestError as e:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Error de conexión con HubSpot al asociar tarea: {str(e)}"
+                        )
+                
+                elif update_response.status_code not in (200, 204):
+                    # Usar el mismo patrón mejorado de manejo de errores
+                    error_msg = f"Status code: {update_response.status_code}"
+                    try:
+                        # Intentar obtener el contenido de la respuesta como JSON
+                        if update_response.content and len(update_response.content.strip()) > 0:
+                            error_data = update_response.json()
+                            if isinstance(error_data, dict) and "message" in error_data:
+                                error_msg = error_data["message"]
+                            else:
+                                error_msg = str(error_data)
+                            logger.error(f"Error al actualizar tarea: {error_msg}")
+                        else:
+                            logger.error(f"Respuesta vacía con código de estado: {update_response.status_code}")
+                    except Exception as parse_error:
+                        # En caso de error al parsear JSON o cualquier otro problema
+                        logger.error(f"No se pudo parsear la respuesta como JSON: {str(parse_error)}")
+                        logger.error(f"Contenido de la respuesta: {update_response.content[:500] if update_response.content else 'Vacío'}")
+                    
+                    # Construir un mensaje de error informativo
+                    error_detail = f"Error al actualizar tarea en HubSpot (Status {update_response.status_code}): {error_msg}"
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail=error_detail
+                    )
+            
+            except httpx.RequestError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error de conexión con HubSpot: {str(e)}"
+                )
+
+        # Registrar operación exitosa
+        log_sync_operation("update_task", "task", request.taskId, success=True)
+        
+        return {
+            "status": "success",
+            "message": "Tarea actualizada correctamente en HubSpot",
+            "task_id": request.taskId,
+            "hubspot_id": request.hubspotId,
+            "hubspot_type": request.hubspotType
+        }
+    
+    except HTTPException:
+        # Pasar excepciones HTTP directamente
+        raise
+    
+    except Exception as e:
+        # Registrar operación fallida
+        log_sync_operation("update_task", "task", request.taskId, success=False, error=str(e))
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=format_error_response(e)
+        )
+
+@router.post("/search")
+async def search_hubspot_objects(
+    request: SearchRequest,
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Busca objetos en HubSpot según tipo y término de búsqueda.
+    Devuelve una lista de resultados con ID, nombre y propiedades principales.
+    """
+    logger.info(f"Iniciando búsqueda en HubSpot para usuario: {user_id}, tipo: {request.type}, query: {request.query}")
+    
+    # Verificar que el tipo sea válido
+    valid_types = ["deal", "contact", "ticket", "company"]
+    if request.type not in valid_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Tipo de objeto no válido. Debe ser uno de: {', '.join(valid_types)}"
+        )
+    
+    # Verificar longitud mínima de búsqueda
+    if len(request.query.strip()) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El término de búsqueda debe tener al menos 2 caracteres"
+        )
+    
+    try:
+        # Obtener la API key del usuario
+        api_key = await get_user_api_key(user_id)
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="HubSpot no está configurado para este usuario"
+            )
+        
+        # Definir propiedades a obtener según el tipo de objeto
+        property_map = {
+            "contact": ["email", "firstname", "lastname", "company"],
+            "company": ["name", "domain", "industry"],
+            "deal": ["dealname", "amount", "dealstage", "pipeline"],
+            "ticket": ["subject", "content", "priority"]
+        }
+        
+        properties = property_map.get(request.type, ["name"])
+        
+        # Preparar payload de búsqueda
+        search_payload = {
+            "filterGroups": [],
+            "sorts": [],
+            "properties": properties,
+            "limit": 10  # Limitar a 10 resultados
+        }
+        
+        # Adaptar la búsqueda según el tipo de objeto
+        if request.type == "contact":
+            # Buscar por email, nombre o apellido
+            search_payload["filterGroups"] = [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "email",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                },
+                {
+                    "filters": [
+                        {
+                            "propertyName": "firstname",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                },
+                {
+                    "filters": [
+                        {
+                            "propertyName": "lastname",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                }
+            ]
+        elif request.type == "company":
+            # Buscar por nombre o dominio
+            search_payload["filterGroups"] = [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "name",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                },
+                {
+                    "filters": [
+                        {
+                            "propertyName": "domain",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                }
+            ]
+        elif request.type == "deal":
+            # Buscar por nombre del deal
+            search_payload["filterGroups"] = [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "dealname",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                }
+            ]
+        elif request.type == "ticket":
+            # Buscar por asunto o contenido
+            search_payload["filterGroups"] = [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "subject",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                },
+                {
+                    "filters": [
+                        {
+                            "propertyName": "content",
+                            "operator": "CONTAINS_TOKEN",
+                            "value": request.query
+                        }
+                    ]
+                }
+            ]
+        
+        # Realizar la búsqueda en HubSpot
+        async with httpx.AsyncClient() as client:
+            endpoint = f"https://api.hubapi.com/crm/v3/objects/{request.type}s/search"
+            
+            # Para tickets, la URL es diferente
+            if request.type == "ticket":
+                endpoint = "https://api.hubapi.com/crm/v3/objects/tickets/search"
+            
+            hs_response = await client.post(
+                endpoint,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=search_payload
+            )
+            
+            hs_response.raise_for_status()
+            hs_results = hs_response.json()
+            
+            # Transformar resultados al formato esperado por el frontend
+            results = []
+            
+            for item in hs_results.get("results", []):
+                result = {
+                    "id": item["id"],
+                    "type": request.type,
+                    "properties": {}
+                }
+                
+                # Establecer el nombre según el tipo de objeto
+                if request.type == "contact":
+                    firstname = item["properties"].get("firstname", "")
+                    lastname = item["properties"].get("lastname", "")
+                    result["name"] = f"{firstname} {lastname}".strip() or "Sin nombre"
+                    # Agregar propiedades adicionales
+                    result["properties"] = {
+                        "email": item["properties"].get("email", ""),
+                        "company": item["properties"].get("company", "")
+                    }
+                elif request.type == "company":
+                    result["name"] = item["properties"].get("name", "Empresa sin nombre")
+                    # Agregar propiedades adicionales
+                    result["properties"] = {
+                        "domain": item["properties"].get("domain", ""),
+                        "industry": item["properties"].get("industry", "")
+                    }
+                elif request.type == "deal":
+                    result["name"] = item["properties"].get("dealname", "Deal sin nombre")
+                    # Agregar propiedades adicionales
+                    result["properties"] = {
+                        "amount": item["properties"].get("amount", ""),
+                        "dealstage": item["properties"].get("dealstage", "")
+                    }
+                elif request.type == "ticket":
+                    result["name"] = item["properties"].get("subject", "Ticket sin asunto")
+                    # Agregar propiedades adicionales
+                    result["properties"] = {
+                        "priority": item["properties"].get("priority", ""),
+                        "content": (item["properties"].get("content", "") or "")[:50] + "..."  # Truncar contenido largo
+                    }
+                
+                results.append(result)
+            
+            return {"results": results, "total": len(results)}
+            
+    except httpx.HTTPStatusError as e:
+        error_detail = "Error en API de HubSpot"
+        try:
+            error_data = e.response.json()
+            error_detail = error_data.get("message", error_detail)
+        except:
+            error_detail = f"HTTP Error: {e.response.status_code}"
+            
+        logger.error(f"Error en búsqueda de HubSpot: {error_detail}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=error_detail
+        )
+        
+    except Exception as e:
+        error_detail = format_error_response(e)
+        logger.error(f"Error general en búsqueda de HubSpot: {error_detail}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error durante la búsqueda: {error_detail}"
         ) 

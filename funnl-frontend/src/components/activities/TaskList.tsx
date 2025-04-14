@@ -1,20 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, CircleSlash } from 'lucide-react';
+import { Plus, CircleSlash, Filter, ArrowDownUp } from 'lucide-react';
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from '@/components/ui/button';
 import TaskItem from './TaskItem';
 import { type Task } from '@/services/supabaseService';
 import { useTasksQuery } from '@/hooks/useTasks';
+import EmptyStateIllustration from './EmptyStateIllustration';
 
 interface TaskListProps {
   showFilters?: boolean;
   maxItems?: number;
+  filteredTasks?: Task[];
 }
 
-const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => {
+const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems, filteredTasks: externalFilteredTasks }) => {
   const { toast } = useToast();
-  const { data: tasks = [], isLoading, error } = useTasksQuery();
-  const [filteredTasks, setFilteredTasks] = useState<Task[]>([]);
+  const { data: allTasks = [], isLoading, error } = useTasksQuery();
+  const [localFilteredTasks, setLocalFilteredTasks] = useState<Task[]>([]);
   const [filters, setFilters] = useState({
     status: 'all',
     priority: 'all',
@@ -36,9 +38,24 @@ const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => 
 
   // Aplicar filtros cuando cambian o cuando se cargan las tareas
   useEffect(() => {
-    if (!tasks) return;
+    // Si las tareas externas están definidas, usarlas directamente
+    if (externalFilteredTasks) {
+      const limitedTasks = maxItems && externalFilteredTasks.length > maxItems
+        ? externalFilteredTasks.slice(0, maxItems)
+        : externalFilteredTasks;
+      
+      setLocalFilteredTasks(limitedTasks);
+      return;
+    }
     
-    let result = [...tasks];
+    // Si no hay tareas disponibles, salir con array vacío
+    if (!allTasks || allTasks.length === 0) {
+      setLocalFilteredTasks([]);
+      return;
+    }
+    
+    // Filtrar tareas localmente
+    let result = [...allTasks];
 
     if (filters.status !== 'all') {
       result = result.filter(task => task.status === filters.status);
@@ -50,10 +67,8 @@ const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => 
 
     if (filters.hubspotType !== 'all') {
       if (filters.hubspotType === 'none') {
-        // Filtrar tareas sin hubspot_id o con hubspot_id explícitamente null
         result = result.filter(task => !task.hubspot_id);
       } else {
-        // Filtrar tareas con un tipo específico de HubSpot
         result = result.filter(task => 
           task.hubspot_type && task.hubspot_type === filters.hubspotType
         );
@@ -62,10 +77,8 @@ const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => 
 
     if (filters.syncStatus !== 'all') {
       if (filters.syncStatus === 'none') {
-        // Filtrar tareas sin sync_status o con sync_status explícitamente null
         result = result.filter(task => !task.sync_status);
       } else {
-        // Filtrar tareas con un estado de sincronización específico
         result = result.filter(task => 
           task.sync_status && task.sync_status === filters.syncStatus
         );
@@ -73,12 +86,12 @@ const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => 
     }
 
     // Limitar resultados si es necesario
-    if (maxItems && result.length > maxItems) {
-      result = result.slice(0, maxItems);
-    }
+    const limitedResult = maxItems && result.length > maxItems
+      ? result.slice(0, maxItems)
+      : result;
 
-    setFilteredTasks(result);
-  }, [tasks, filters, maxItems]);
+    setLocalFilteredTasks(limitedResult);
+  }, [allTasks, filters, maxItems, externalFilteredTasks]);
 
   const handleFilterChange = (filterName: string, value: string) => {
     setFilters(prev => ({
@@ -86,6 +99,12 @@ const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => 
       [filterName]: value
     }));
   };
+
+  // Usar isLoading desde la consulta solo si no recibimos tareas filtradas externas
+  const isLoadingTasks = externalFilteredTasks ? false : isLoading;
+  
+  // Determinar qué tareas mostrar
+  const tasksToDisplay = localFilteredTasks;
 
   return (
     <div className="space-y-4">
@@ -171,27 +190,20 @@ const TaskList: React.FC<TaskListProps> = ({ showFilters = true, maxItems }) => 
         </div>
       )}
 
-      {isLoading ? (
+      {isLoadingTasks ? (
         <div className="space-y-3">
           <div className="animate-pulse bg-gray-100 h-24 rounded-lg"></div>
           <div className="animate-pulse bg-gray-100 h-24 rounded-lg"></div>
           <div className="animate-pulse bg-gray-100 h-24 rounded-lg"></div>
         </div>
-      ) : filteredTasks.length > 0 ? (
+      ) : tasksToDisplay.length > 0 ? (
         <div className="space-y-3">
-          {filteredTasks.map(task => (
+          {tasksToDisplay.map(task => (
             <TaskItem key={task.id} task={task} />
           ))}
         </div>
       ) : (
-        <div className="text-center py-8">
-          <CircleSlash className="mx-auto h-10 w-10 text-gray-300" />
-          <p className="text-gray-500 mt-2">No hay tareas disponibles</p>
-          <Button variant="outline" size="sm" className="mt-4">
-            <Plus className="h-4 w-4 mr-1" />
-            Crear tarea
-          </Button>
-        </div>
+        <EmptyStateIllustration />
       )}
     </div>
   );

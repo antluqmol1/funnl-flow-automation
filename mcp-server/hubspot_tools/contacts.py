@@ -57,7 +57,20 @@ async def get_hubspot_token(user_id: str = None):
                 .execute()
             
             if response.data and len(response.data) > 0:
-                return response.data[0]["config"].get("access_token")
+                # Intentar obtener el token desde diferentes campos posibles
+                config = response.data[0]["config"]
+                # Primero verificar si existe apiKey (formato nuevo)
+                if "apiKey" in config:
+                    return config.get("apiKey")
+                # Si no, intentar con access_token (formato antiguo)
+                elif "access_token" in config:
+                    return config.get("access_token")
+                # Si hay un token pero con otro nombre
+                elif len(config) > 0:
+                    # Intentar con cualquier clave que pueda ser un token
+                    for key in config:
+                        if "token" in key.lower() or "key" in key.lower() or "api" in key.lower():
+                            return config[key]
         except Exception as e:
             logger.error(f"Error obteniendo token de HubSpot: {e}")
     
