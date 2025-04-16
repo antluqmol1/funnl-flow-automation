@@ -1,81 +1,196 @@
-
-import React from 'react';
-import { Phone, Mail, MessageSquare, ChevronRight } from 'lucide-react';
+import React, { useState } from 'react';
+import { Phone, Mail, MessageSquare, ChevronRight, Calendar, Clock, Tag, Users, ExternalLink, Activity } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { type Contact } from '@/services/supabaseService';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuLabel, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { formatDistanceToNow } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 interface ContactCardProps {
-  contact: Contact;
+  contact: Contact & { tasksCount?: number };
 }
 
 const ContactCard: React.FC<ContactCardProps> = ({ contact }) => {
+  const [expanded, setExpanded] = useState(false);
+  
   const getContactValue = () => {
     if (!contact.value) return null;
     
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('es-ES', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'EUR',
       maximumFractionDigits: 0
     }).format(contact.value);
   };
   
   const getStatusClass = () => {
     switch (contact.status) {
-      case 'prospect':
-        return 'bg-blue-100 text-blue-800';
-      case 'opportunity':
+      case 'subscriber':
+        return 'bg-slate-100 text-slate-800';
+      case 'lead':
         return 'bg-yellow-100 text-yellow-800';
+      case 'mql':
+        return 'bg-rose-100 text-rose-800';
+      case 'sql':
+        return 'bg-orange-100 text-orange-800';
+      case 'opportunity':
+        return 'bg-indigo-100 text-indigo-800';
       case 'customer':
-        return 'bg-green-100 text-green-800';
+        return 'bg-emerald-100 text-emerald-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
   };
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(part => part[0])
+      .join('')
+      .toUpperCase()
+      .substring(0, 2);
+  };
   
+  const getLastContactDate = () => {
+    if (!contact.last_contact) return 'Sin contacto previo';
+    
+    return formatDistanceToNow(new Date(contact.last_contact), { 
+      addSuffix: true,
+      locale: es
+    });
+  };
+
   return (
-    <div className="funnl-item">
-      <div className="flex justify-between items-start">
-        <div>
-          <h3 className="font-medium text-gray-800">{contact.name}</h3>
-          <p className="text-sm text-gray-600">{contact.position} at {contact.company}</p>
-          
-          {(contact.value || contact.probability) && (
-            <div className="flex gap-2 mt-1">
-              {contact.value && (
-                <span className="funnl-badge bg-funnl-soft-purple text-funnl-secondary">
-                  {getContactValue()}
-                </span>
-              )}
-              {contact.probability && (
-                <span className="funnl-badge bg-gray-100 text-gray-700">
-                  {contact.probability}% Probability
-                </span>
-              )}
+    <div className="bg-white rounded-lg border shadow-sm hover:shadow-md transition-all">
+      <div className="p-3">
+        <div className="flex justify-between items-start">
+          <div className="flex items-start gap-3">
+            <Avatar className="h-10 w-10">
+              <AvatarImage src={contact.avatar || undefined} alt={contact.name} />
+              <AvatarFallback>{getInitials(contact.name)}</AvatarFallback>
+            </Avatar>
+            <div>
+              <h3 className="font-medium text-gray-800">{contact.name}</h3>
+              <p className="text-sm text-gray-600 line-clamp-1">
+                {contact.position && `${contact.position} · `}{contact.company}
+              </p>
+              
+              <div className="flex gap-2 mt-1 flex-wrap">
+                {contact.value && (
+                  <Badge variant="secondary" className="bg-funnl-soft-purple text-funnl-secondary">
+                    {getContactValue()}
+                  </Badge>
+                )}
+                {contact.probability && (
+                  <Badge variant="outline" className="bg-gray-50">
+                    {contact.probability}% Prob.
+                  </Badge>
+                )}
+                <Badge className={`${getStatusClass()}`}>
+                  {contact.status.charAt(0).toUpperCase() + contact.status.slice(1)}
+                </Badge>
+              </div>
             </div>
-          )}
+          </div>
+          
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setExpanded(!expanded)}
+            className="h-8 w-8"
+          >
+            <ChevronRight className={`h-4 w-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+          </Button>
         </div>
         
-        <span className={`funnl-badge ${getStatusClass()}`}>
-          {contact.status.charAt(0).toUpperCase() + contact.status.slice(1)}
-        </span>
+        {expanded && (
+          <div className="mt-3 space-y-2">
+            <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+              <div className="flex items-center gap-1">
+                <Mail className="h-3 w-3" />
+                <span className="truncate">{contact.email}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Phone className="h-3 w-3" />
+                <span>{contact.phone || 'Sin teléfono'}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                <span>{getLastContactDate()}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Activity className="h-3 w-3" />
+                <span>{contact.tasksCount || 0} tareas</span>
+              </div>
+            </div>
+            
+            {contact.tags && contact.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {contact.tags.map((tag, index) => (
+                  <Badge key={index} variant="outline" className="text-xs px-1.5 py-0">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
       
-      <div className="mt-3 flex justify-between items-center">
-        <div className="flex gap-3">
-          <button className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
-            <Phone className="h-4 w-4 text-gray-700" />
-          </button>
-          <button className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
-            <Mail className="h-4 w-4 text-gray-700" />
-          </button>
-          <button className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
-            <MessageSquare className="h-4 w-4 text-gray-700" />
-          </button>
+      <div className="border-t px-3 py-2 flex justify-between items-center bg-gray-50 rounded-b-lg">
+        <div className="flex gap-2">
+          <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+            <a href={`tel:${contact.phone}`}>
+              <Phone className="h-4 w-4 text-gray-700" />
+            </a>
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+            <a href={`mailto:${contact.email}`}>
+              <Mail className="h-4 w-4 text-gray-700" />
+            </a>
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <Users className="h-4 w-4 text-gray-700" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuLabel>Acciones</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem>
+                <Calendar className="h-4 w-4 mr-2" />
+                <span>Programar tarea</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem>
+                <MessageSquare className="h-4 w-4 mr-2" />
+                <span>Registrar llamada</span>
+              </DropdownMenuItem>
+              {contact.hubspot_id && (
+                <DropdownMenuItem asChild>
+                  <a href={`https://app.hubspot.com/contacts/${contact.hubspot_id}`} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="h-4 w-4 mr-2" />
+                    <span>Ver en HubSpot</span>
+                  </a>
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         
-        <Link to={`/contact/${contact.id}`} className="flex items-center text-sm text-funnl-primary font-medium">
-          Details
-          <ChevronRight className="h-4 w-4 ml-1" />
+        <Link to={`/contact/${contact.id}`} className="text-xs font-medium text-funnl-primary flex items-center">
+          Ver detalles
+          <ChevronRight className="h-3 w-3 ml-1" />
         </Link>
       </div>
     </div>

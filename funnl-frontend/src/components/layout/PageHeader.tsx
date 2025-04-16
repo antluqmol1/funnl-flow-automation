@@ -15,9 +15,10 @@ interface PageHeaderProps {
   title: string;
   subtitle?: string;
   action?: React.ReactNode;
+  children?: React.ReactNode;
 }
 
-const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action }) => {
+const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action, children }) => {
   const { signOut } = useAuthContext();
 
   return (
@@ -31,6 +32,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action }) => {
           
           <div className="flex items-center space-x-4">
             {action && <div className="hidden sm:block">{action}</div>}
+            {children && <div className="hidden sm:flex">{children}</div>}
             
             <DropdownMenu>
               <DropdownMenuTrigger className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 hover:bg-gray-200">
@@ -69,7 +71,12 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action }) => {
             </DropdownMenu>
           </div>
           
-          {action && <div className="mt-4 sm:hidden">{action}</div>}
+          {(action || children) && (
+            <div className="mt-4 sm:hidden">
+              {action}
+              {children}
+            </div>
+          )}
         </div>
       </div>
     </div>

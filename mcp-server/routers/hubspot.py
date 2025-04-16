@@ -1065,7 +1065,7 @@ async def search_hubspot_objects(
     logger.info(f"Iniciando búsqueda en HubSpot para usuario: {user_id}, tipo: {request.type}, query: {request.query}")
     
     # Verificar que el tipo sea válido
-    valid_types = ["deal", "contact", "ticket", "company"]
+    valid_types = ["deal", "contact", "ticket", "company", "companies"]
     if request.type not in valid_types:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1092,6 +1092,7 @@ async def search_hubspot_objects(
         property_map = {
             "contact": ["email", "firstname", "lastname", "company"],
             "company": ["name", "domain", "industry"],
+            "companies": ["name", "domain", "industry"],  # Añadir companies como alias de company
             "deal": ["dealname", "amount", "dealstage", "pipeline"],
             "ticket": ["subject", "content", "priority"]
         }
@@ -1138,7 +1139,7 @@ async def search_hubspot_objects(
                     ]
                 }
             ]
-        elif request.type == "company":
+        elif request.type == "company" or request.type == "companies":
             # Buscar por nombre o dominio
             search_payload["filterGroups"] = [
                 {
@@ -1204,6 +1205,10 @@ async def search_hubspot_objects(
             if request.type == "ticket":
                 endpoint = "https://api.hubapi.com/crm/v3/objects/tickets/search"
             
+            # Para companies, nos aseguramos de que el endpoint sea correcto
+            elif request.type == "companies":
+                endpoint = "https://api.hubapi.com/crm/v3/objects/companies/search"
+            
             hs_response = await client.post(
                 endpoint,
                 headers={
@@ -1236,7 +1241,7 @@ async def search_hubspot_objects(
                         "email": item["properties"].get("email", ""),
                         "company": item["properties"].get("company", "")
                     }
-                elif request.type == "company":
+                elif request.type == "company" or request.type == "companies":
                     result["name"] = item["properties"].get("name", "Empresa sin nombre")
                     # Agregar propiedades adicionales
                     result["properties"] = {
@@ -1282,4 +1287,85 @@ async def search_hubspot_objects(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error durante la búsqueda: {error_detail}"
+        ) 
+
+@router.post("/create-deal-migration")
+async def create_deal_migration():
+    """
+    Migración para añadir campos hubspot_id y hubspot_type a la tabla deals.
+    """
+    try:
+        supabase.table("deals").update({}, count_option="exact").execute()
+        
+        # Verificar si los campos ya existen
+        try:
+            # Intentar una consulta con los campos para ver si existen
+            supabase.table("deals").select("hubspot_id, hubspot_type").limit(1).execute()
+            return {"status": "success", "message": "Los campos ya existen en la tabla"}
+        except Exception:
+            # Si hay error, asumimos que los campos no existen
+            pass
+            
+        # Añadir campo hubspot_id
+        supabase.postgres.query("""
+            ALTER TABLE deals 
+            ADD COLUMN IF NOT EXISTS hubspot_id TEXT,
+            ADD COLUMN IF NOT EXISTS hubspot_type TEXT
+        """).execute()
+        
+        return {"status": "success", "message": "Campos añadidos correctamente"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@router.post("/companies/search")
+async def search_companies(
+    request: SearchRequest,
+    user_id: str = Depends(get_current_user)
+):
+    """
+    Busca empresas en HubSpot por nombre.
+    """
+    try:
+        # Obtener la API key del usuario
+        api_key = await get_user_api_key(user_id)
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="HubSpot no está configurado para este usuario"
+            )
+
+        # Importar función de búsqueda de empresas
+        from hubspot_tools.companies import buscar_empresa_hubspot
+        
+        # Buscar empresas en HubSpot
+        result = await buscar_empresa_hubspot(request.query, user_id)
+        
+        # Si hay error, devolverlo
+        if result.get("error"):
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=result["error"]
+            )
+        
+        # Formatear respuesta para el frontend
+        companies = []
+        for company in result.get("results", []):
+            companies.append({
+                "id": company.get("id"),
+                "name": company.get("name", "Empresa sin nombre"),
+                "type": "company",
+                "properties": {
+                    "domain": company.get("domain", ""),
+                    "industry": company.get("industry", ""),
+                    "city": company.get("city", "")
+                }
+            })
+        
+        return {"results": companies, "total": len(companies)}
+        
+    except Exception as e:
+        logger.error(f"Error buscando empresas en HubSpot: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error buscando empresas: {str(e)}"
         ) 

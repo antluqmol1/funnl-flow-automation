@@ -11,6 +11,7 @@ import VerifyEmailPage from './pages/auth/verify-email'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import Index from "./pages/Index";
 import Funnel from "./pages/Funnel";
+import Pipeline from "./pages/Pipeline";
 import Agent from "./pages/Agent";
 import Automations from "./pages/Automations";
 import Meetings from "./pages/Meetings";
@@ -34,6 +35,7 @@ const App = () => (
             {/* Rutas públicas */}
             <Route path="/" element={<Index />} />
             <Route path="/funnel" element={<Funnel />} />
+            <Route path="/pipeline" element={<Pipeline />} />
 
             {/* Rutas de autenticación */}
             <Route path="/auth/login" element={<LoginPage />} />

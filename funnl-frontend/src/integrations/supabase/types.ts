@@ -11,87 +11,239 @@ export type Database = {
     Tables: {
       automations: {
         Row: {
-          created_at: string | null
+          id: string
+          name: string
           description: string
           enabled: boolean
-          id: string
           last_run: string | null
-          name: string
           tasks_completed: number | null
+          created_at: string | null
           updated_at: string | null
         }
         Insert: {
-          created_at?: string | null
+          id?: string
+          name: string
           description: string
           enabled?: boolean
-          id?: string
           last_run?: string | null
-          name: string
           tasks_completed?: number | null
+          created_at?: string | null
           updated_at?: string | null
         }
         Update: {
-          created_at?: string | null
+          id?: string
+          name?: string
           description?: string
           enabled?: boolean
-          id?: string
           last_run?: string | null
-          name?: string
           tasks_completed?: number | null
+          created_at?: string | null
           updated_at?: string | null
         }
         Relationships: []
       }
       contacts: {
         Row: {
-          avatar: string | null
-          company: string
-          created_at: string | null
-          email: string
           id: string
-          last_contact: string | null
           name: string
-          phone: string
+          company: string
           position: string
-          probability: number | null
+          email: string
+          phone: string
+          avatar: string | null
           status: string
-          tags: string[] | null
-          updated_at: string | null
+          last_contact: string | null
           value: number | null
+          probability: number | null
+          tags: string[] | null
+          created_at: string | null
+          updated_at: string | null
+          hubspot_id: string | null
+          hubspot_type: string | null
+          user_id: string | null
         }
         Insert: {
-          avatar?: string | null
-          company: string
-          created_at?: string | null
-          email: string
           id?: string
-          last_contact?: string | null
           name: string
-          phone: string
+          company: string
           position: string
-          probability?: number | null
+          email: string
+          phone: string
+          avatar?: string | null
           status: string
-          tags?: string[] | null
-          updated_at?: string | null
+          last_contact?: string | null
           value?: number | null
+          probability?: number | null
+          tags?: string[] | null
+          created_at?: string | null
+          updated_at?: string | null
+          hubspot_id?: string | null
+          hubspot_type?: string | null
+          user_id?: string | null
         }
         Update: {
-          avatar?: string | null
-          company?: string
-          created_at?: string | null
-          email?: string
           id?: string
-          last_contact?: string | null
           name?: string
-          phone?: string
+          company?: string
           position?: string
-          probability?: number | null
+          email?: string
+          phone?: string
+          avatar?: string | null
           status?: string
-          tags?: string[] | null
-          updated_at?: string | null
+          last_contact?: string | null
           value?: number | null
+          probability?: number | null
+          tags?: string[] | null
+          created_at?: string | null
+          updated_at?: string | null
+          hubspot_id?: string | null
+          hubspot_type?: string | null
+          user_id?: string | null
         }
         Relationships: []
+      }
+      deals: {
+        Row: {
+          id: string
+          title: string
+          description: string | null
+          company: string
+          contact_id: string | null
+          value: number | null
+          currency: string | null
+          stage_id: string
+          owner_id: string | null
+          probability: number | null
+          expected_close_date: string | null
+          tags: string[] | null
+          status: string | null
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          title: string
+          description?: string | null
+          company: string
+          contact_id?: string | null
+          value?: number | null
+          currency?: string | null
+          stage_id: string
+          owner_id?: string | null
+          probability?: number | null
+          expected_close_date?: string | null
+          tags?: string[] | null
+          status?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          title?: string
+          description?: string | null
+          company?: string
+          contact_id?: string | null
+          value?: number | null
+          currency?: string | null
+          stage_id?: string
+          owner_id?: string | null
+          probability?: number | null
+          expected_close_date?: string | null
+          tags?: string[] | null
+          status?: string | null
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deals_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "deals_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "pipeline_stages"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
+      pipelines: {
+        Row: {
+          id: string
+          name: string
+          description: string | null
+          is_active: boolean
+          icon: string | null
+          color: string | null
+          sort_order: number
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          description?: string | null
+          is_active?: boolean
+          icon?: string | null
+          color?: string | null
+          sort_order?: number
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          description?: string | null
+          is_active?: boolean
+          icon?: string | null
+          color?: string | null
+          sort_order?: number
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      pipeline_stages: {
+        Row: {
+          id: string
+          name: string
+          position: number
+          color: string | null
+          pipeline_id: string
+          created_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          name: string
+          position: number
+          color?: string | null
+          pipeline_id: string
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          name?: string
+          position?: number
+          color?: string | null
+          pipeline_id?: string
+          created_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pipeline_stages_pipeline_id_fkey"
+            columns: ["pipeline_id"]
+            isOneToOne: false
+            referencedRelation: "pipelines"
+            referencedColumns: ["id"]
+          }
+        ]
       }
       daily_activities: {
         Row: {
@@ -335,106 +487,106 @@ type DefaultSchema = Database[Extract<keyof Database, "public">]
 
 export type Tables<
   DefaultSchemaTableNameOrOptions extends
-    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
-    | { schema: keyof Database },
+  | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+  | { schema: keyof Database },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof (Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-        Database[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+  ? keyof (Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+    Database[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
   ? (Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
-      Database[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+    Database[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
       Row: infer R
     }
-    ? R
-    : never
+  ? R
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])
-    ? (DefaultSchema["Tables"] &
-        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
-        Row: infer R
-      }
-      ? R
-      : never
-    : never
+    DefaultSchema["Views"])
+  ? (DefaultSchema["Tables"] &
+    DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+      Row: infer R
+    }
+  ? R
+  : never
+  : never
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof Database },
+  | keyof DefaultSchema["Tables"]
+  | { schema: keyof Database },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+  ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
   ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Insert: infer I
-    }
-    ? I
-    : never
+    Insert: infer I
+  }
+  ? I
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Insert: infer I
-      }
-      ? I
-      : never
-    : never
+  ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    Insert: infer I
+  }
+  ? I
+  : never
+  : never
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof Database },
+  | keyof DefaultSchema["Tables"]
+  | { schema: keyof Database },
   TableName extends DefaultSchemaTableNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+  ? keyof Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+  : never = never,
 > = DefaultSchemaTableNameOrOptions extends { schema: keyof Database }
   ? Database[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
-      Update: infer U
-    }
-    ? U
-    : never
+    Update: infer U
+  }
+  ? U
+  : never
   : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
-    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
-        Update: infer U
-      }
-      ? U
-      : never
-    : never
+  ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+    Update: infer U
+  }
+  ? U
+  : never
+  : never
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof Database },
+  | keyof DefaultSchema["Enums"]
+  | { schema: keyof Database },
   EnumName extends DefaultSchemaEnumNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof Database[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+  ? keyof Database[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+  : never = never,
 > = DefaultSchemaEnumNameOrOptions extends { schema: keyof Database }
   ? Database[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
   : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
-    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
-    : never
+  ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+  : never
 
 export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
-    | keyof DefaultSchema["CompositeTypes"]
-    | { schema: keyof Database },
+  | keyof DefaultSchema["CompositeTypes"]
+  | { schema: keyof Database },
   CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
     schema: keyof Database
   }
-    ? keyof Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+  ? keyof Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+  : never = never,
 > = PublicCompositeTypeNameOrOptions extends { schema: keyof Database }
   ? Database[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
   : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
-    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
-    : never
+  ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+  : never
 
 export const Constants = {
   public: {

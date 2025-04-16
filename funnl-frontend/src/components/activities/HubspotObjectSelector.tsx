@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   Command, 
   CommandEmpty, 
@@ -10,12 +10,15 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Loader2, Search, Plus, X } from 'lucide-react';
+import { Loader2, Search, Plus, X, User, Building, Briefcase, TicketIcon } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
 // URL de la API
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// Cache de búsquedas
+const searchCache: Record<string, any[]> = {};
 
 interface HubspotObject {
   id: string;
@@ -40,11 +43,33 @@ export default function HubspotObjectSelector({
   const [open, setOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [objects, setObjects] = useState<HubspotObject[]>([]);
   const [isConnectionChecked, setIsConnectionChecked] = useState(false);
   const [isHubspotConnected, setIsHubspotConnected] = useState(false);
   const { toast } = useToast();
+  
+  // Referencias para los timeouts
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Cuando se abre el selector, enfocar automáticamente el input
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Mantener la referencia al estado de apertura para el efecto de foco
+  const wasOpen = useRef(open);
+
+  // Al cambiar el estado de apertura, enfocar el input
+  useEffect(() => {
+    if (open && !wasOpen.current) {
+      // Retrasamos ligeramente para permitir que el DOM se actualice
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 50);
+    }
+    wasOpen.current = open;
+  }, [open]);
 
   // Verificar si HubSpot está conectado al montar el componente
   useEffect(() => {
@@ -85,15 +110,73 @@ export default function HubspotObjectSelector({
     }
   }, [isConnectionChecked]);
 
-  // Buscar objetos cuando se abre el popover o cambia el término de búsqueda
-  useEffect(() => {
-    if (open && isHubspotConnected && searchTerm.length >= 2) {
-      searchObjects(searchTerm);
+  // Manejar cambios en el input
+  const handleInputChange = (value: string) => {
+    setSearchTerm(value);
+    setIsTyping(true);
+    
+    // Limpiar el timeout de escritura anterior
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
     }
-  }, [open, searchTerm, isHubspotConnected]);
+    
+    // Establecer un timeout corto para el indicador de escritura
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false);
+    }, 500);
+    
+    // Verificar si el término ya está en caché
+    const cacheKey = `${objectType}:${value.toLowerCase()}`;
+    if (value.length >= 2 && searchCache[cacheKey]) {
+      setObjects(searchCache[cacheKey]);
+      return;
+    }
+  };
+
+  // Buscar objetos cuando cambia el término de búsqueda (con debounce)
+  useEffect(() => {
+    if (!isHubspotConnected || searchTerm.length < 2) return;
+
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    
+    // Verificar en caché antes de realizar la búsqueda
+    const cacheKey = `${objectType}:${searchTerm.toLowerCase()}`;
+    if (searchCache[cacheKey]) {
+      setObjects(searchCache[cacheKey]);
+      return;
+    }
+
+    searchTimeoutRef.current = setTimeout(() => {
+      searchObjects(searchTerm);
+    }, 150); // Reducido a 150ms para mayor respuesta
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+    };
+  }, [searchTerm, isHubspotConnected, objectType]);
+  
+  // Abrir automáticamente el popover cuando se enfoca el botón
+  const handleButtonFocus = () => {
+    if (!open && isConnectionChecked && isHubspotConnected) {
+      setOpen(true);
+    }
+  };
 
   const searchObjects = async (query: string) => {
     if (!isHubspotConnected || query.length < 2) return;
+    
+    const cacheKey = `${objectType}:${query.toLowerCase()}`;
+    if (searchCache[cacheKey]) {
+      setObjects(searchCache[cacheKey]);
+      return;
+    }
     
     setIsLoading(true);
     setError(null);
@@ -102,7 +185,7 @@ export default function HubspotObjectSelector({
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error('No hay sesión activa');
       
-      // Endpoint personalizado para buscar objetos en HubSpot (necesitarías implementarlo en el backend)
+      // Endpoint personalizado para buscar objetos en HubSpot
       const response = await fetch(`${API_URL}/hubspot/search`, {
         method: 'POST',
         headers: {
@@ -121,7 +204,26 @@ export default function HubspotObjectSelector({
       }
       
       const data = await response.json();
-      setObjects(data.results || []);
+      const results = data.results || [];
+      
+      // Guardar en caché para futuras búsquedas
+      searchCache[cacheKey] = results;
+      
+      // También almacenar resultados parciales si hay suficientes
+      if (results.length > 0 && query.length >= 3) {
+        const terms = query.toLowerCase().split(/\s+/);
+        terms.forEach(term => {
+          if (term.length >= 2) {
+            const partialCacheKey = `${objectType}:${term}`;
+            // Solo almacenar si no existe o si tiene menos resultados
+            if (!searchCache[partialCacheKey] || searchCache[partialCacheKey].length < results.length) {
+              searchCache[partialCacheKey] = results;
+            }
+          }
+        });
+      }
+      
+      setObjects(results);
     } catch (err) {
       console.error('Error searching HubSpot objects:', err);
       setError(err instanceof Error ? err.message : 'Error buscando objetos');
@@ -133,12 +235,14 @@ export default function HubspotObjectSelector({
       setObjects([]);
     } finally {
       setIsLoading(false);
+      setIsTyping(false);
     }
   };
 
   const handleSelect = (object: HubspotObject) => {
     onSelect(object);
     setOpen(false);
+    setSearchTerm(''); // Limpiar búsqueda al seleccionar
   };
 
   const clearSelection = () => {
@@ -152,6 +256,16 @@ export default function HubspotObjectSelector({
       case 'contact': return 'Contacto';
       case 'company': return 'Empresa';
       default: return type;
+    }
+  };
+  
+  const getTypeIcon = (type: string) => {
+    switch (type) {
+      case 'deal': return <Briefcase className="h-3 w-3 mr-1" />;
+      case 'ticket': return <TicketIcon className="h-3 w-3 mr-1" />;
+      case 'contact': return <User className="h-3 w-3 mr-1" />;
+      case 'company': return <Building className="h-3 w-3 mr-1" />;
+      default: return null;
     }
   };
 
@@ -183,6 +297,7 @@ export default function HubspotObjectSelector({
       {selectedObject ? (
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="flex items-center gap-1">
+            {getTypeIcon(selectedObject.type)}
             <span className="text-sm font-medium">{getTypeLabel(selectedObject.type)}:</span>
             <span className="text-sm">{selectedObject.name}</span>
           </Badge>
@@ -203,27 +318,45 @@ export default function HubspotObjectSelector({
               variant="outline" 
               className="w-full justify-start text-left font-normal"
               disabled={!isConnectionChecked || isLoading}
+              onFocus={handleButtonFocus}
             >
               {isLoading ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
                 <Search className="mr-2 h-4 w-4" />
               )}
-              <span>Buscar en HubSpot...</span>
+              <span>Buscar {getTypeLabel(objectType).toLowerCase()} en HubSpot...</span>
             </Button>
           </PopoverTrigger>
           <PopoverContent className="p-0" align="start" alignOffset={-5} style={{ width: "300px", maxHeight: "400px" }}>
-            <Command>
-              <CommandInput 
-                placeholder={`Buscar ${getTypeLabel(objectType).toLowerCase()}...`} 
-                value={searchTerm}
-                onValueChange={setSearchTerm}
-              />
+            <Command shouldFilter={false}>
+              <div className="relative">
+                <CommandInput 
+                  ref={inputRef}
+                  placeholder={`Buscar ${getTypeLabel(objectType).toLowerCase()}...`} 
+                  value={searchTerm}
+                  onValueChange={handleInputChange}
+                  className="pr-8"
+                />
+                {isTyping && (
+                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                    <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                  </div>
+                )}
+              </div>
+              
+              {searchTerm.length === 1 && (
+                <div className="px-4 py-2 text-xs text-gray-500">
+                  Escribe al menos 2 caracteres para buscar...
+                </div>
+              )}
+              
               <CommandList>
                 <CommandEmpty>
                   {isLoading ? (
-                    <div className="flex items-center justify-center py-6">
-                      <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+                    <div className="flex flex-col items-center justify-center py-6">
+                      <Loader2 className="h-8 w-8 animate-spin text-gray-400 mb-2" />
+                      <p className="text-sm text-gray-500">Buscando en HubSpot...</p>
                     </div>
                   ) : (
                     <>
@@ -244,34 +377,38 @@ export default function HubspotObjectSelector({
                     </>
                   )}
                 </CommandEmpty>
-                <CommandGroup heading={`Resultados para ${getTypeLabel(objectType)}`}>
-                  {objects.map((obj) => (
-                    <CommandItem 
-                      key={obj.id}
-                      onSelect={() => handleSelect(obj)}
-                      className="flex items-center"
-                    >
-                      <div className="flex flex-col">
-                        <span className="text-sm font-medium">{obj.name}</span>
-                        {obj.properties?.email && (
-                          <span className="text-xs text-gray-500">{obj.properties.email}</span>
-                        )}
-                        {obj.properties?.company && (
-                          <span className="text-xs text-gray-500">{obj.properties.company}</span>
-                        )}
-                      </div>
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
+                
+                {objects.length > 0 && (
+                  <CommandGroup heading={`Resultados para ${getTypeLabel(objectType)}`}>
+                    {objects.map((obj) => (
+                      <CommandItem 
+                        key={obj.id}
+                        onSelect={() => handleSelect(obj)}
+                        className="flex items-start gap-2 cursor-pointer hover:bg-gray-100 transition-colors p-2"
+                      >
+                        <div className="flex-1 overflow-hidden">
+                          <div className="font-medium flex items-center truncate">
+                            {getTypeIcon(obj.type)}
+                            {obj.name}
+                          </div>
+                          {obj.properties?.email && (
+                            <div className="text-xs text-gray-500 truncate">{obj.properties.email}</div>
+                          )}
+                          {obj.properties?.phone && (
+                            <div className="text-xs text-gray-500 truncate">{obj.properties.phone}</div>
+                          )}
+                          {obj.properties?.amount && (
+                            <div className="text-xs text-gray-500 truncate">{obj.properties.amount}</div>
+                          )}
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
               </CommandList>
             </Command>
           </PopoverContent>
         </Popover>
-      )}
-      
-      {/* Mostrar error si existe */}
-      {error && (
-        <p className="text-xs text-red-500">{error}</p>
       )}
     </div>
   );

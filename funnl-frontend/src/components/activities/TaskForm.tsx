@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -38,8 +38,7 @@ const taskSchema = z.object({
   contact_id: z.string().nullable(),
   status: z.enum(['pending', 'completed', 'overdue']),
   priority: z.enum(['high', 'medium', 'low']),
-  // Campos de HubSpot opcionales
-  link_to_hubspot: z.boolean().default(false),
+  // Campos de HubSpot
   hubspot_id: z.string().nullable().optional(),
   hubspot_type: z.enum(['deal', 'ticket', 'contact', 'company']).nullable().optional(),
 });
@@ -48,7 +47,6 @@ type TaskFormValues = z.infer<typeof taskSchema>;
 
 const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
   const { toast } = useToast();
-  const [showHubspotFields, setShowHubspotFields] = useState(!!task?.hubspot_id);
   
   const createTaskMutation = useCreateTaskMutation();
   const updateTaskMutation = useUpdateTaskMutation();
@@ -62,7 +60,6 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       contact_id: task.contact_id,
       status: task.status,
       priority: task.priority,
-      link_to_hubspot: !!task.hubspot_id,
       hubspot_id: task.hubspot_id,
       hubspot_type: task.hubspot_type
     } : {
@@ -72,30 +69,23 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       contact_id: null,
       status: 'pending',
       priority: 'medium',
-      link_to_hubspot: false,
       hubspot_id: null,
-      hubspot_type: null
+      hubspot_type: 'contact' // Valor predeterminado 'contact'
     },
   });
 
   const onSubmit = async (values: TaskFormValues) => {
     try {
-      // Si no enlazamos con HubSpot, quitamos esos valores
-      if (!values.link_to_hubspot) {
-        values.hubspot_id = null;
-        values.hubspot_type = null;
-      } else if (values.hubspot_id && values.hubspot_type) {
-        console.log(`Vinculando tarea con objeto de HubSpot: ${values.hubspot_type} (ID: ${values.hubspot_id})`);
+      // Si se seleccionó un contacto, actualizamos el contact_id
+      if (values.hubspot_type === 'contact' && values.hubspot_id) {
+        values.contact_id = values.hubspot_id;
       }
-      
-      // Omitimos el campo link_to_hubspot ya que no es parte del modelo Task
-      const { link_to_hubspot, ...taskData } = values;
       
       if (task) {
         // Actualizar tarea existente
         await updateTaskMutation.mutateAsync({
           id: task.id,
-          updates: taskData
+          updates: values
         });
         toast({
           title: "Tarea actualizada",
@@ -103,7 +93,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
         });
       } else {
         // Crear nueva tarea
-        await createTaskMutation.mutateAsync(taskData as Omit<Task, 'id' | 'created_at' | 'updated_at'>);
+        await createTaskMutation.mutateAsync(values as Omit<Task, 'id' | 'created_at' | 'updated_at'>);
         toast({
           title: "Tarea creada",
           description: "La tarea ha sido creada correctamente.",
@@ -124,14 +114,20 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
     }
   };
 
-  // Toggle para mostrar/ocultar campos de HubSpot
-  const handleHubspotToggle = (checked: boolean) => {
-    setShowHubspotFields(checked);
-    form.setValue('link_to_hubspot', checked);
-    
-    if (!checked) {
-      form.setValue('hubspot_id', null);
+  // Manejador para cuando se selecciona un objeto de HubSpot
+  const handleHubspotObjectSelect = (object: any) => {
+    if (object) {
+      form.setValue('hubspot_type', object.type);
+      form.setValue('hubspot_id', object.id);
+      
+      // Si el objeto es un contacto, actualizamos también el contact_id
+      if (object.type === 'contact') {
+        form.setValue('contact_id', object.id);
+      }
+    } else {
       form.setValue('hubspot_type', null);
+      form.setValue('hubspot_id', null);
+      form.setValue('contact_id', null);
     }
   };
 
@@ -249,73 +245,42 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
             )}
           />
         </div>
-
-        <FormField
-          control={form.control}
-          name="link_to_hubspot"
-          render={({ field }) => (
-            <FormItem className="flex flex-row items-start space-x-3 space-y-0 rounded-md border p-4">
-              <FormControl>
-                <Checkbox
-                  checked={field.value}
-                  onCheckedChange={(checked) => {
-                    field.onChange(checked);
-                    handleHubspotToggle(checked as boolean);
-                  }}
-                />
-              </FormControl>
-              <div className="space-y-1 leading-none">
-                <FormLabel>Vincular con HubSpot</FormLabel>
-                <p className="text-sm text-gray-500">
-                  Relaciona esta tarea con un objeto de HubSpot, te permitirá buscar por nombre en lugar de usar el ID
-                </p>
-              </div>
-            </FormItem>
-          )}
-        />
-
-        {showHubspotFields && (
-          <div className="space-y-4 border p-4 rounded-md">
-            <h3 className="text-sm font-medium">Información de HubSpot</h3>
-            
-            <FormField
-              control={form.control}
-              name="hubspot_type"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Objeto en HubSpot</FormLabel>
-                  <FormControl>
-                    <HubspotObjectSelector
-                      objectType={field.value as any || 'contact'}
-                      onSelect={(object) => {
-                        if (object) {
-                          form.setValue('hubspot_type', object.type);
-                          form.setValue('hubspot_id', object.id);
-                        } else {
-                          form.setValue('hubspot_type', null);
-                          form.setValue('hubspot_id', null);
-                        }
-                      }}
-                      selectedObject={
-                        field.value && form.getValues('hubspot_id')
-                          ? {
-                              id: form.getValues('hubspot_id') || '',
-                              name: `ID: ${form.getValues('hubspot_id')}`, // Mostramos el ID si no tenemos el nombre
-                              type: field.value as any,
-                            }
-                          : null
-                      }
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    Selecciona el objeto de HubSpot al que deseas vincular esta tarea
-                  </FormDescription>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-        )}
+        
+        {/* Sección de vinculación con HubSpot (siempre visible) */}
+        <div className="space-y-4 border p-4 rounded-md">
+          <h3 className="text-sm font-medium">Contacto de HubSpot</h3>
+          
+          <FormField
+            control={form.control}
+            name="hubspot_type"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Contacto</FormLabel>
+                <FormControl>
+                  <HubspotObjectSelector
+                    objectType="contact"
+                    onSelect={handleHubspotObjectSelect}
+                    selectedObject={
+                      form.getValues('hubspot_id')
+                        ? {
+                            id: form.getValues('hubspot_id') || '',
+                            name: form.getValues('hubspot_id')?.includes('hubspot-') 
+                              ? `Contacto de HubSpot (${form.getValues('hubspot_id')?.substring(8, 16)}...)`
+                              : 'Contacto seleccionado',
+                            type: 'contact',
+                          }
+                        : null
+                    }
+                  />
+                </FormControl>
+                <FormDescription>
+                  Selecciona un contacto de HubSpot para vincular con esta tarea
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
 
         <div className="flex justify-end space-x-2">
           <Button
