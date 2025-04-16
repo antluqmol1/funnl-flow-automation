@@ -1,164 +1,359 @@
-
-import React, { useState } from 'react';
-import PageHeader from '@/components/layout/PageHeader';
-import BottomNavbar from '@/components/layout/BottomNavbar';
+import React, { useState, useEffect, useRef } from 'react';
+import { AssistantService } from '../services/assistantService';
+import { Mic, Send, StopCircle, X, Type, MessageSquare, User, ArrowUp } from 'lucide-react';
+import AudioRecorder from '../components/audio/AudioRecorder';
+import MessageComponent from '../components/chat/Message';
 import { Button } from '@/components/ui/button';
-import { Mic, StopCircle, Play, MessageSquare } from 'lucide-react';
-import { useToast } from '@/components/ui/use-toast';
+import { Input } from '@/components/ui/input';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+import BottomNavbar from '@/components/layout/BottomNavbar';
+import PageHeader from '@/components/layout/PageHeader';
+
+// Definición de la interfaz Message
+export interface Message {
+  id: string;
+  content: string;
+  role: 'user' | 'assistant' | 'system';
+  timestamp: Date;
+  isProcessingAudio?: boolean;
+}
 
 const Agent = () => {
+  // Estados
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [audioMessages, setAudioMessages] = useState<{type: 'user' | 'agent', content: string, timestamp: Date}[]>([
-    {type: 'agent', content: 'Hello! I can help you manage activities, update prospect statuses, and sync data with Hubspot. How can I assist you today?', timestamp: new Date()}
-  ]);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const { toast } = useToast();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [transcription, setTranscription] = useState<string | null>(null);
+  const [audioMode, setAudioMode] = useState(true); // Por defecto en modo audio
+  const [error, setError] = useState<string | null>(null);
+  
+  // Referencias
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
-  const handleToggleRecording = () => {
-    if (isRecording) {
-      handleStopRecording();
-    } else {
-      handleStartRecording();
+  // Generar ID único para mensajes
+  const generateId = () => `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+  // Verificar conexión con el servidor
+  const checkConnection = async () => {
+    try {
+      console.log("Verificando conexión inicial con el servidor...");
+      // Una solicitud simple para verificar si el servicio está disponible
+      await AssistantService.sendMessage('ping');
+      setIsConnected(true);
+      setError(null);
+    } catch (error) {
+      setIsConnected(false);
+      setError('No se puede conectar al servidor. Verifica tu conexión.');
+      console.error('Error de conexión:', error);
     }
   };
 
-  const handleStartRecording = () => {
-    setIsRecording(true);
-    setRecordingTime(0);
-    toast({
-      title: "Recording started",
-      description: "Speak your message to the agent",
-    });
+  // Efecto para inicializar mensajes
+  useEffect(() => {
+    // Mensaje de bienvenida inicial
+    setMessages([
+      {
+        id: generateId(),
+        content: "Hola, soy el asistente de Funnl. ¿En qué puedo ayudarte hoy?",
+        role: 'assistant',
+        timestamp: new Date()
+      }
+    ]);
+
+    // Establecer conexión con el servicio - solo una vez al cargar
+    checkConnection();
+    
+    // No incluimos checkConnection en las dependencias para que no se ejecute más de una vez
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Efecto para hacer scroll al fondo cuando hay nuevos mensajes
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Scroll al final del chat
+  const scrollToBottom = () => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
-  const handleStopRecording = () => {
-    setIsRecording(false);
-    // Simulate processing the audio and getting a response
-    const userMessage = {
-      type: 'user' as const,
-      content: 'Audio message sent',
+  // Manejar envío de mensaje de texto
+  const handleSendMessage = async () => {
+    if (!input.trim() && !isRecording) return;
+    
+    if (isRecording) {
+      return; // No permitir envío mientras se graba
+    }
+
+    // Limpiar errores anteriores
+    setError(null);
+
+    // Agregar mensaje del usuario al chat
+    const userMessage: Message = {
+      id: generateId(),
+      content: input,
+      role: 'user',
       timestamp: new Date()
     };
     
-    setAudioMessages(prev => [...prev, userMessage]);
+    setMessages(prev => [...prev, userMessage]);
+    setInput(''); // Limpiar input
     
-    // Simulate AI response after a delay
-    setTimeout(() => {
-      let response = "I've received your audio message. How would you like me to help you with Hubspot today?";
+    try {
+      setIsProcessing(true);
       
-      setAudioMessages(prev => [...prev, {
-        type: 'agent',
-        content: response,
-        timestamp: new Date()
-      }]);
-    }, 1500);
-  };
+      // Agregar mensaje provisional del asistente (loading)
+      const assistantMessageId = generateId();
+      setMessages(prev => [
+        ...prev, 
+        {
+          id: assistantMessageId,
+          content: '...',
+          role: 'assistant',
+          timestamp: new Date(),
+          isProcessingAudio: false
+        }
+      ]);
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // Simulate recording timer
-  React.useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingTime(prev => prev + 1);
-      }, 1000);
+      // Obtener respuesta del asistente
+      const response = await AssistantService.sendMessage(input);
+      
+      // Actualizar con la respuesta real
+      setMessages(prev => prev.map(msg => 
+        msg.id === assistantMessageId
+          ? { ...msg, content: response.message, isProcessingAudio: false }
+          : msg
+      ));
+      
+    } catch (error) {
+      console.error('Error al enviar mensaje:', error);
+      setError('Error al procesar tu mensaje. Inténtalo de nuevo.');
+    } finally {
+      setIsProcessing(false);
     }
-    
-    return () => clearInterval(interval);
-  }, [isRecording]);
-
-  const playAudioMessage = (index: number) => {
-    toast({
-      title: "Playing audio",
-      description: "This would play the actual audio in a real implementation",
-    });
   };
+
+  // Manejar entrada de texto
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+  };
+
+  // Manejar tecla Enter
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  // Alternar entre modo audio y texto
+  const toggleInputMode = () => {
+    setAudioMode(!audioMode);
+  };
+
+  // Iniciar grabación de audio
+  const startRecording = () => {
+    setIsRecording(true);
+  };
+
+  // Manejar finalización de grabación de audio
+  const handleRecordingComplete = async (audioBlob: Blob) => {
+    setIsRecording(false);
+    
+    // Limpiar errores anteriores
+    setError(null);
+    
+    try {
+      // Agregar mensaje temporal del usuario indicando audio
+      const userMessageId = generateId();
+      setMessages(prev => [
+        ...prev, 
+        {
+          id: userMessageId,
+          content: 'Enviando mensaje de audio...',
+          role: 'user',
+          timestamp: new Date()
+        }
+      ]);
+      
+      // Agregar mensaje provisional del asistente (procesando audio)
+      const assistantMessageId = generateId();
+      setMessages(prev => [
+        ...prev, 
+        {
+          id: assistantMessageId,
+          content: '',
+          role: 'assistant',
+          timestamp: new Date(),
+          isProcessingAudio: true
+        }
+      ]);
+      
+      setIsProcessing(true);
+      
+      // Enviar audio al servicio
+      const response = await AssistantService.sendAudioMessage(audioBlob);
+      
+      // Actualizar mensaje del usuario con la transcripción
+      setMessages(prev => prev.map(msg => 
+        msg.id === userMessageId
+          ? { ...msg, content: response.transcription || 'Mensaje de audio' }
+          : msg
+      ));
+      
+      // Actualizar mensaje del asistente con la respuesta
+      setMessages(prev => prev.map(msg => 
+        msg.id === assistantMessageId
+          ? { ...msg, content: response.message, isProcessingAudio: false }
+          : msg
+      ));
+      
+      setTranscription(response.transcription || null);
+      
+    } catch (error) {
+      console.error('Error al procesar audio:', error);
+      setError('Error al procesar tu audio. Inténtalo de nuevo.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Cancelar grabación de audio
+  const handleRecordingCancel = () => {
+    setIsRecording(false);
+    // Asegurarnos de limpiar cualquier estado relacionado con el audio
+    setTranscription(null);
+    console.log("Grabación cancelada por el usuario");
+  };
+
+  // Mejoramos el useEffect para asegurar la inicialización correcta del layout
+  useEffect(() => {
+    // Esto fuerza un reflow que ayuda con el posicionamiento inicial
+    setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ behavior: 'auto' });
+      }
+      if (chatContainerRef.current) {
+        chatContainerRef.current.style.opacity = '1';
+      }
+    }, 100);
+  }, []);
 
   return (
-    <div className="mobile-container">
+    <div className="flex flex-col h-screen bg-gray-50 pb-14">
+      {/* Header - flex-col se encarga */}
       <PageHeader 
-        title="Agent" 
-        subtitle="Your AI assistant for Hubspot"
+        title="Asistente IA" 
+        subtitle="Consulta tus datos y obtén ayuda inteligente"
       />
+
+      {/* Panel de error - shrink-0 */}
+      {error && (
+        <div className="bg-destructive/10 text-destructive px-6 py-2 text-sm border-b border-destructive/20 shrink-0">
+          <div className="container mx-auto flex items-center">
+            <span className="mr-2">⚠️</span>
+            <span>{error}</span>
+          </div>
+        </div>
+      )}
       
-      <div className="p-4 pb-24 h-full"> 
-        <ScrollArea className="h-[calc(100vh-220px)] mb-3">
-          <div className="p-3">
-            {audioMessages.map((msg, idx) => (
-              <div 
-                key={idx} 
-                className={`mb-3 ${
-                  msg.type === 'user' ? 'text-right' : ''
-                }`}
-              >
-                <div className={`inline-block p-3 rounded-lg max-w-[85%] ${
-                  msg.type === 'user' 
-                    ? 'bg-funnl-primary text-white' 
-                    : 'bg-white border border-gray-200'
-                }`}>
-                  <div className="flex items-center">
-                    {msg.type === 'user' ? (
-                      <Mic className="h-5 w-5 mr-2" />
-                    ) : (
-                      <MessageSquare className="h-5 w-5 mr-2" />
-                    )}
-                    <span>{msg.content}</span>
-                    {msg.type === 'user' && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm"
-                        className="ml-2 h-6 w-6 p-0"
-                        onClick={() => playAudioMessage(idx)}
-                      >
-                        <Play className="h-3 w-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <div className="text-xs mt-1 opacity-70">
-                    {msg.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-        
-        {isRecording && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-100 rounded-lg animate-pulse-light">
-            <div className="flex items-center text-red-600">
-              <div className="h-2 w-2 bg-red-600 rounded-full mr-2" />
-              <span className="font-medium">Recording in progress</span>
-              <span className="ml-auto font-mono">{formatTime(recordingTime)}</span>
-            </div>
-          </div>
-        )}
-        
-        <Button 
-          variant={isRecording ? "destructive" : "default"}
-          className={`fixed bottom-24 left-1/2 transform -translate-x-1/2 w-5/6 ${!isRecording ? 'bg-funnl-primary hover:bg-funnl-secondary' : ''}`}
-          onClick={handleToggleRecording}
-        >
-          {isRecording ? (
-            <>
-              <StopCircle className="h-5 w-5 mr-2" />
-              Stop Recording
-            </>
-          ) : (
-            <>
-              <Mic className="h-5 w-5 mr-2" />
-              Record Message
-            </>
-          )}
-        </Button>
+      {/* Área principal de chat - flex-1 para ocupar espacio, overflow-y-auto para scroll interno */}
+      <div className="flex-1 overflow-y-auto p-4"> 
+        {/* Contenedor interno para centrar y limitar ancho de mensajes */}
+        <div className="max-w-4xl mx-auto space-y-4">
+          {messages.map((message) => (
+            <MessageComponent
+              key={message.id}
+              message={message}
+            />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
       </div>
       
+      {/* Panel inferior de entrada - shrink-0, se posiciona después del chat */}
+      <div className="shrink-0 border-t border-border bg-background">
+        {/* Contenedor interno para centrar y limitar ancho de controles */}
+        <div className="max-w-4xl mx-auto p-4">
+          {/* Grabadora de audio cuando está en modo audio y grabando */}
+          {audioMode && isRecording ? (
+            <AudioRecorder
+              onRecordingComplete={handleRecordingComplete}
+              onRecordingCancel={handleRecordingCancel}
+              className="mb-4"
+            />
+          ) : (
+            <div className="flex items-end space-x-2">
+              {/* Botón para cambiar modo */}
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={toggleInputMode}
+                className="rounded-full"
+                title={audioMode ? "Cambiar a modo texto" : "Cambiar a modo audio"}
+              >
+                {audioMode ? <Type className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              </Button>
+              
+              {/* Input de texto o botón de audio según el modo */}
+              {audioMode ? (
+                <Button
+                  variant="default"
+                  size="lg"
+                  onClick={startRecording}
+                  disabled={isRecording || isProcessing}
+                  className={cn(
+                    "rounded-full flex-1 gap-2",
+                    isProcessing && "opacity-70"
+                  )}
+                >
+                  <Mic className="h-4 w-4" />
+                  {isProcessing ? "Procesando..." : "Presiona para hablar"}
+                </Button>
+              ) : (
+                <div className="flex w-full">
+                  <Input
+                    type="text"
+                    value={input}
+                    onChange={handleInputChange}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Escribe un mensaje..."
+                    className="flex-1 rounded-full rounded-r-none border-r-0"
+                    disabled={isProcessing}
+                  />
+                  <Button
+                    variant="default"
+                    size="icon"
+                    onClick={handleSendMessage}
+                    disabled={!input.trim() || isProcessing}
+                    className="rounded-full rounded-l-none h-10"
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Indicador de transcripción de audio reciente */}
+          {transcription && !isRecording && (
+            <div className="mt-2 text-xs text-muted-foreground italic">
+              Transcripción: {transcription}
+            </div>
+          )}
+        </div>
+      </div>
+      
+      {/* Barra de navegación inferior - Fija al fondo por sus propios estilos */}
       <BottomNavbar />
     </div>
   );

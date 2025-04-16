@@ -238,7 +238,7 @@ const Funnel = () => {
   }, [filteredStages, selectedFilter]);
   
   return (
-    <div className="mobile-container">
+    <div className="min-h-screen bg-gray-50 pb-20">
       <PageHeader 
         title="Embudo de Clientes" 
         subtitle="Visualiza y gestiona tu proceso de ventas"
@@ -284,7 +284,7 @@ const Funnel = () => {
         </div>
       </PageHeader>
       
-      <div className="p-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
         {/* Barra de Búsqueda y Filtros */}
         <div className="mb-4">
           <div className="relative mb-2">
@@ -344,7 +344,7 @@ const Funnel = () => {
         ) : (
           <>
             {visibleStages.some(stage => stage.contacts.length > 0) ? (
-              <div className="space-y-6">
+              <div className="space-y-4">
                 {visibleStages.map(stage => (
                   <FunnelStage 
                     key={stage.id} 

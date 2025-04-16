@@ -11,9 +11,11 @@
   will-change: filter;
   transition: filter 300ms;
 }
+
 .logo:hover {
   filter: drop-shadow(0 0 2em #646cffaa);
 }
+
 .logo.react:hover {
   filter: drop-shadow(0 0 2em #61dafbaa);
 }
@@ -22,6 +24,7 @@
   from {
     transform: rotate(0deg);
   }
+
   to {
     transform: rotate(360deg);
   }
@@ -39,4 +42,28 @@
 
 .read-the-docs {
   color: #888;
+}
+
+/* Estilos para corregir la superposición de elementos en el chat */
+.input-container {
+  position: relative;
+  z-index: 40;
+  background-color: var(--background);
+  border-top: 1px solid var(--border);
+  margin-bottom: 56px;
+  /* Altura aproximada del bottom navbar */
+}
+
+/* Mejora del estilo para la barra de navegación inferior */
+.bottom-tabs {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background-color: var(--background);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+  height: 56px;
+  /* Altura fija para ayudar con el espaciado */
 }

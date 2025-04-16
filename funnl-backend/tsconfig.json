@@ -11,7 +11,8 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": [
-    "mcpClient.ts"
+    "mcpClient.ts",
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules"

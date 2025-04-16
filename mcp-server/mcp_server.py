@@ -36,185 +36,80 @@ logger.info("Iniciando servidor MCP...")
 # Crear la instancia de FastMCP
 mcp = FastMCP("funnl-tools", delimiter="\n")
 
-# Definir las herramientas MCP
-# Herramientas para contactos
+# Herramientas MCP
+# Registro de herramientas para contactos
 @mcp.tool()
 async def find_contact(first_search_property_name: str) -> dict:
-    """
-    Busca un contacto en HubSpot por email, nombre o cualquier otra propiedad.
-    
-    Args:
-        first_search_property_name: Valor a buscar (email, nombre, etc.)
-        
-    Returns:
-        dict: Información del contacto encontrado o error
-    """
     try:
         result = await buscar_contacto_hubspot(first_search_property_name)
         return result
     except Exception as e:
-        logger.error(f"Error en find_contact: {str(e)}")
         return {"error": str(e)}
 
 @mcp.tool()
 async def create_contact(firstname: str, email: str) -> dict:
-    """
-    Crea un nuevo contacto en HubSpot.
-    
-    Args:
-        firstname: Nombre del contacto
-        email: Email del contacto
-        
-    Returns:
-        dict: Información del contacto creado o error
-    """
     try:
         return await crear_contacto_hubspot(firstname, email)
     except Exception as e:
-        logger.error(f"Error en create_contact: {str(e)}")
         return {"error": str(e)}
 
-# Herramientas para empresas
+# Registro de herramientas para empresas
 @mcp.tool()
-async def find_company(search_term: str) -> dict:
-    """
-    Busca una empresa en HubSpot por nombre u otra propiedad.
-    
-    Args:
-        search_term: Término de búsqueda
-        
-    Returns:
-        dict: Información de la empresa encontrada o error
-    """
+async def find_company(first_search_property_name: str) -> dict:
     try:
-        return await buscar_empresa_hubspot(search_term)
+        return await buscar_empresa_hubspot(first_search_property_name)
     except Exception as e:
-        logger.error(f"Error en find_company: {str(e)}")
         return {"error": str(e)}
 
 @mcp.tool()
-async def get_company(company_id: str) -> dict:
-    """
-    Obtiene información detallada de una empresa en HubSpot por su ID.
-    
-    Args:
-        company_id: ID de la empresa en HubSpot
-        
-    Returns:
-        dict: Información detallada de la empresa o error
-    """
+async def get_company(id: str, properties_to_retrieve: str) -> dict:
     try:
-        return await obtener_empresa_hubspot(company_id)
+        return await obtener_empresa_hubspot(id, properties_to_retrieve)
     except Exception as e:
-        logger.error(f"Error en get_company: {str(e)}")
         return {"error": str(e)}
 
 @mcp.tool()
 async def create_company(name: str, description: str = "", industry: str = "", city: str = "") -> dict:
-    """
-    Crea una nueva empresa en HubSpot.
-    
-    Args:
-        name: Nombre de la empresa
-        description: Descripción de la empresa
-        industry: Industria de la empresa
-        city: Ciudad de la empresa
-        
-    Returns:
-        dict: Información de la empresa creada o error
-    """
     try:
         return await crear_empresa_hubspot(name=name, description=description, industry=industry, city=city)
     except Exception as e:
-        logger.error(f"Error en create_company: {str(e)}")
         return {"error": str(e)}
 
 @mcp.tool()
-async def update_company(company_id: str, properties: dict) -> dict:
-    """
-    Actualiza una empresa existente en HubSpot.
-    
-    Args:
-        company_id: ID de la empresa en HubSpot
-        properties: Diccionario con propiedades a actualizar
-        
-    Returns:
-        dict: Información de la empresa actualizada o error
-    """
+async def update_company(**kwargs) -> dict:
     try:
-        return await actualizar_empresa_hubspot(company_id, properties)
+        return await actualizar_empresa_hubspot(**kwargs)
     except Exception as e:
-        logger.error(f"Error en update_company: {str(e)}")
         return {"error": str(e)}
 
-# Herramientas para deals
+# Registro de herramientas para deals
 @mcp.tool()
-async def find_deal(search_term: str) -> dict:
-    """
-    Busca un deal en HubSpot por nombre u otra propiedad.
-    
-    Args:
-        search_term: Término de búsqueda
-        
-    Returns:
-        dict: Información del deal encontrado o error
-    """
+async def find_deal(first_search_property_name: str) -> dict:
     try:
-        return await buscar_deal_hubspot(search_term)
+        return await buscar_deal_hubspot(first_search_property_name)
     except Exception as e:
-        logger.error(f"Error en find_deal: {str(e)}")
         return {"error": str(e)}
 
 @mcp.tool()
-async def get_deal(deal_id: str) -> dict:
-    """
-    Obtiene información detallada de un deal en HubSpot por su ID.
-    
-    Args:
-        deal_id: ID del deal en HubSpot
-        
-    Returns:
-        dict: Información detallada del deal o error
-    """
+async def get_deal(id: str, properties_to_retrieve: str) -> dict:
     try:
-        return await obtener_deal_hubspot(deal_id)
+        return await obtener_deal_hubspot(id, properties_to_retrieve)
     except Exception as e:
-        logger.error(f"Error en get_deal: {str(e)}")
         return {"error": str(e)}
 
-# Herramientas para tickets
+# Registro de herramientas para tickets
 @mcp.tool()
-async def find_ticket(search_term: str) -> dict:
-    """
-    Busca un ticket en HubSpot por nombre, ID u otra propiedad.
-    
-    Args:
-        search_term: Término de búsqueda
-        
-    Returns:
-        dict: Información del ticket encontrado o error
-    """
+async def find_ticket(first_search_property_name: str) -> dict:
     try:
-        return await buscar_ticket_hubspot(search_term)
+        return await buscar_ticket_hubspot(first_search_property_name)
     except Exception as e:
-        logger.error(f"Error en find_ticket: {str(e)}")
         return {"error": str(e)}
 
 @mcp.tool()
-async def get_ticket(ticket_id: str) -> dict:
-    """
-    Obtiene información detallada de un ticket en HubSpot por su ID.
-    
-    Args:
-        ticket_id: ID del ticket en HubSpot
-        
-    Returns:
-        dict: Información detallada del ticket o error
-    """
+async def get_ticket(id: str, properties_to_retrieve: str) -> dict:
     try:
-        return await obtener_ticket_hubspot(ticket_id)
+        return await obtener_ticket_hubspot(id, properties_to_retrieve)
     except Exception as e:
-        logger.error(f"Error en get_ticket: {str(e)}")
         return {"error": str(e)}
 
 # Herramientas de análisis
@@ -301,4 +196,4 @@ async def analyze_activities(activities: list, user_id: str, time_range: dict = 
 if __name__ == "__main__":
     logger.info("Iniciando servidor MCP...")
     # Ejecutar el servidor MCP (bloqueante)
-    mcp.run() 
+    mcp.run(transport="stdio") 
