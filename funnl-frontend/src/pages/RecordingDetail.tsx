@@ -2,20 +2,18 @@ import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import PageHeader from '@/components/layout/PageHeader';
 import BottomNavbar from '@/components/layout/BottomNavbar';
-import { ArrowLeft, Calendar, Clock, Download, AlertCircle, Loader } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, Download, AlertCircle, Loader, FileText, ListChecks, BrainCircuit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Spinner } from '@/components/ui/spinner';
 import TranscriptionViewerV2 from '@/components/agent/TranscriptionViewerV2';
-import { useTranscriptionQuery, TranscriptionStatus as HookTranscriptionStatus } from '@/hooks/useTranscriptionQuery';
 import { TranscriptionProvider } from '@/contexts/TranscriptionContext';
 import { getTemporaryDownloadUrl } from '@/services/supabaseStorage';
 import { useToast } from '@/components/ui/use-toast';
 import { formatDistanceToNow, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Recording, getRecordingById } from '@/services/supabaseService';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { requestTranscription } from '@/services/whisperService';
 
 const RecordingDetail = () => {
@@ -24,56 +22,36 @@ const RecordingDetail = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
-  const [isRequestingTranscription, setIsRequestingTranscription] = useState(false);
-
   console.log(`[RecordingDetail] Renderizando para ID: ${id}`);
   
   const {
-    data: transcriptionHookData,
-    isLoading: isLoadingTranscriptionPolling,
-    isError: isErrorTranscriptionPolling,
-    error: transcriptionPollingError,
-    requestTranscriptionMutation,
-  } = useTranscriptionQuery(id || '', { 
-      polling: true,
-  });
-  
-  useEffect(() => {
-    console.log(`[RecordingDetail][TranscriptionPolling] ID: ${id}, isLoading: ${isLoadingTranscriptionPolling}, isError: ${isErrorTranscriptionPolling}, Error: ${transcriptionPollingError}`);
-    if (transcriptionHookData) {
-        console.log(`[RecordingDetail][TranscriptionPolling] Datos recibidos. Status DB: ${transcriptionHookData.status}`);
-        console.log('[RecordingDetail][TranscriptionPolling] Contenido completo de transcriptionHookData:', JSON.stringify(transcriptionHookData, null, 2));
-    } else {
-        console.log('[RecordingDetail][TranscriptionPolling] transcriptionHookData es null o undefined.');
-    }
-  }, [id, isLoadingTranscriptionPolling, isErrorTranscriptionPolling, transcriptionPollingError, transcriptionHookData]);
-  
-  const { 
-    data: recordingData, 
-    isLoading: isLoadingRecording, 
-    isError: isErrorRecording, 
-    error: recordingQueryError, 
-    status: recordingQueryStatus
+    data: recordingData,
+    isLoading: isLoadingRecording,
+    isError: isErrorRecording,
+    error: recordingQueryError,
+    status: recordingQueryStatus,
+    refetch: refetchRecording,
   } = useQuery<Recording | null, Error>({
     queryKey: ['recording', id],
     queryFn: async () => {
       console.log(`[RecordingDetail][Recording] Ejecutando queryFn getRecordingById para ID: ${id}`);
       if (!id) return Promise.resolve(null);
-      const data = await getRecordingById(id); 
-      return data; 
+      const data = await getRecordingById(id);
+      console.log(`[RecordingDetail][Recording] Datos recibidos de DB:`, data);
+      return data;
     },
     enabled: !!id,
-    staleTime: 5 * 60 * 1000,
+    refetchInterval: (query) => {
+        const data = query.state.data as Recording | null | undefined;
+        const isCurrentlyProcessing = data?.status === 'processing';
+        const needsProcessing = data?.status === 'recorded' && !!audioUrl;
+        return (isCurrentlyProcessing || needsProcessing) ? 5000 : false;
+    },
+    refetchIntervalInBackground: false,
+    staleTime: 1 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 1
   });
-  
-  useEffect(() => {
-      console.log(`[RecordingDetail][Recording] ID: ${id}, QueryStatus: ${recordingQueryStatus}, isLoading: ${isLoadingRecording}, isError: ${isErrorRecording}, Error: ${recordingQueryError}`);
-      if (recordingData) {
-          console.log(`[RecordingDetail][Recording] Datos (de tabla meeting_recordings) recibidos. Path: ${recordingData.file_path}, Status DB: ${recordingData.status}, Transcripción existe?: ${!!recordingData.transcription}`);
-      }
-  }, [id, recordingQueryStatus, isLoadingRecording, isErrorRecording, recordingQueryError, recordingData]);
   
   const [audioUrl, setAudioUrl] = React.useState<string | null>(null);
   const [audioUrlError, setAudioUrlError] = React.useState<string | null>(null);
@@ -97,47 +75,43 @@ const RecordingDetail = () => {
     };
 
     const filePath = recordingData?.file_path;
-    console.log(`[RecordingDetail][Audio] useEffect ejecutado. isLoadingRecording: ${isLoadingRecording}, recordingData existe: ${!!recordingData}, filePath: ${filePath}`);
-    
-    if (filePath && !audioUrl && !audioUrlError) {
-        fetchAudioUrl(filePath);
-    } else if (!isLoadingRecording && recordingData && !filePath) {
-         console.warn("[RecordingDetail][Audio] Datos de grabación cargados, pero falta file_path para el audio.");
-         setAudioUrlError("No se encontró la ruta del archivo de audio.")
+    if (filePath && !audioUrl && !audioUrlError && recordingQueryStatus === 'success') {
+      fetchAudioUrl(filePath);
+    } else if (recordingQueryStatus === 'success' && recordingData && !filePath) {
+      console.warn("[RecordingDetail][Audio] Datos de grabación cargados, pero falta file_path para el audio.");
+      setAudioUrlError("No se encontró la ruta del archivo de audio.");
     }
-  }, [recordingData, isLoadingRecording, audioUrl, audioUrlError]);
+  }, [recordingData, recordingQueryStatus, audioUrl, audioUrlError]);
+
+  const { mutate: triggerTranscriptionProcessing, isPending: isTriggeringTranscription } = useMutation({
+    mutationFn: async ({ recordingId, signedUrl }: { recordingId: string, signedUrl: string }) => {
+      console.log(`[RecordingDetail] Llamando a triggerTranscriptionProcessing (requestTranscription) para ID: ${recordingId}`);
+      return requestTranscription(recordingId, signedUrl);
+    },
+    onSuccess: (data, variables) => {
+      console.log(`[RecordingDetail] Solicitud de procesamiento para ${variables.recordingId} enviada con éxito.`);
+      toast({ title: "Iniciando procesamiento", description: "La transcripción y análisis pueden tardar unos minutos.", variant: "default" });
+      refetchRecording();
+    },
+    onError: (error, variables) => {
+      console.error(`[RecordingDetail] Error al solicitar procesamiento para ${variables.recordingId}:`, error);
+      toast({ title: "Error", description: "No se pudo iniciar el procesamiento de la grabación.", variant: "destructive" });
+    },
+  });
 
   useEffect(() => {
-    const needsTranscription = 
-      recordingData && 
-      recordingData.status !== 'completed' && 
-      recordingData.status !== 'transcribing' && 
-      recordingData.status !== 'failed' &&
-      !isRequestingTranscription && 
-      id &&
-      audioUrl;
+    const needsProcessingTrigger =
+      recordingData &&
+      recordingData.status === 'recorded' &&
+      !!audioUrl &&
+      !isTriggeringTranscription &&
+      !!id;
 
-    if (needsTranscription) {
-      console.log(`[RecordingDetail] Transcripción necesaria para ${id} (estado DB: ${recordingData.status}) y audioUrl lista. Solicitando ahora...`);
-      setIsRequestingTranscription(true); 
-      
-      requestTranscriptionMutation.mutate(
-        { recordingId: id, signedUrl: audioUrl },
-        {
-          onSuccess: () => {
-            console.log(`[RecordingDetail] Solicitud de transcripción para ${id} enviada con éxito.`);
-            toast({ title: "Iniciando transcripción", description: "El proceso puede tardar unos minutos.", variant: "default"});
-          },
-          onError: (err) => {
-            console.error(`[RecordingDetail] Error al solicitar transcripción para ${id}:`, err);
-            toast({ title: "Error", description: "No se pudo iniciar la transcripción.", variant: "destructive" });
-            setIsRequestingTranscription(false);
-          }
-        }
-      );
+    if (needsProcessingTrigger) {
+      console.log(`[RecordingDetail] Grabación '${id}' en estado 'recorded' y audio listo. Disparando proceso...`);
+      triggerTranscriptionProcessing({ recordingId: id!, signedUrl: audioUrl! });
     }
-
-  }, [recordingData, id, isRequestingTranscription, toast, audioUrl, queryClient, requestTranscriptionMutation]);
+  }, [recordingData, audioUrl, id, triggerTranscriptionProcessing, isTriggeringTranscription]);
 
   const formatDuration = (durationString: string | number | null | undefined): string => {
     let seconds: number | undefined;
@@ -199,8 +173,8 @@ const RecordingDetail = () => {
     }
   };
 
-  if (recordingQueryStatus === 'pending') {
-    console.log(`[RecordingDetail] Renderizando estado de carga inicial. QueryStatus: ${recordingQueryStatus}`);
+  if (isLoadingRecording || recordingQueryStatus === 'pending') {
+    console.log(`[RecordingDetail] Renderizando estado de carga inicial. isLoading: ${isLoadingRecording}, QueryStatus: ${recordingQueryStatus}`);
     return (
       <div className="mobile-container">
         <PageHeader title="Cargando grabación" subtitle="Obteniendo datos..." />
@@ -243,33 +217,15 @@ const RecordingDetail = () => {
   console.log(`[RecordingDetail] Renderizando contenido principal. ID: ${id}`);
   const { relativeTime, exactDate } = formatDate(recordingData.created_at);
   const durationFormatted = formatDuration(recordingData.duration_seconds ?? recordingData.duration);
-  const title = recordingData.title || `Grabación ${id.substring(0, 8)}...`;
+  const title = recordingData.title || `Grabación ${id?.substring(0, 8)}...`;
   
-  // Determinar estado combinado de la transcripción para UI
-  // Prioridad 1: Estado del hook (tabla transcriptions)
-  // Prioridad 2: Estado de la grabación (tabla meeting_recordings)
-  const statusFromHook = transcriptionHookData?.status; // Tipo: ServiceStatus | 'loading' | undefined
-  const statusFromRecording = recordingData?.status; // Tipo: ... | null | undefined
+  const currentStatus = recordingData.status;
+  const hasTranscription = !!recordingData.transcription && recordingData.transcription.trim() !== '';
+  const hasAnalysis = !!recordingData.summary || (!!recordingData.key_points && recordingData.key_points.length > 0);
+  const isProcessing = currentStatus === 'processing';
+  const transcriptionFailed = currentStatus === 'failed';
 
-  let displayStatus: HookTranscriptionStatus['status'] | Recording['status'] | 'unknown' = 'unknown';
-
-  if (statusFromHook) {
-    displayStatus = statusFromHook;
-  } else if (statusFromRecording) {
-    displayStatus = statusFromRecording;
-  }
-
-  console.log(`[RecordingDetail] Estado de transcripción determinado para UI: ${displayStatus}`);
-
-  const isTranscriptionProcessing = 
-      displayStatus === 'processing' || 
-      displayStatus === 'transcribing' || 
-      displayStatus === 'loading' || 
-      isRequestingTranscription;
-      
-  // Acceder a .transcription dentro del objeto del hook
-  const hasTranscription = !!transcriptionHookData?.transcription || !!recordingData?.transcription; 
-  const transcriptionFailed = displayStatus === 'failed';
+  console.log(`[RecordingDetail] Estado Derivado: currentStatus=${currentStatus}, hasTranscription=${hasTranscription}, hasAnalysis=${hasAnalysis}, isProcessing=${isProcessing}, transcriptionFailed=${transcriptionFailed}`);
 
   return (
     <TranscriptionProvider recordingId={id}>
@@ -279,83 +235,119 @@ const RecordingDetail = () => {
             subtitle={`Grabado ${relativeTime}`}
         />
         
-        <div className="p-4 pb-24">
-            <Link to="/meetings" className="flex items-center text-funnl-primary mb-4">
-            <ArrowLeft className="h-4 w-4 mr-1" /> Volver a Reuniones
+        <div className="p-4 pb-24 space-y-6">
+            <Link to="/meetings" className="flex items-center text-funnl-primary -mb-2">
+              <ArrowLeft className="h-4 w-4 mr-1" /> Volver a Reuniones
             </Link>
             
-            <Card className="p-4 mb-6">
-            <div className="flex justify-between items-center mb-2">
-                <div className="flex items-center text-sm text-gray-600">
-                <Calendar className="h-4 w-4 mr-1" />
-                <span title={exactDate}>{relativeTime}</span>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex justify-between items-center mb-3">
+                  <div className="flex items-center text-sm text-gray-600">
+                    <Calendar className="h-4 w-4 mr-1" />
+                    <span title={exactDate}>{relativeTime}</span>
+                  </div>
+                  <div className="flex items-center text-sm text-gray-600">
+                    <Clock className="h-4 w-4 mr-1" />
+                    <span>{durationFormatted}</span>
+                  </div>
                 </div>
-                <div className="flex items-center text-sm text-gray-600">
-                <Clock className="h-4 w-4 mr-1" />
-                <span>{durationFormatted}</span>
-                </div>
-            </div>
-            
-            {audioUrl ? (
-                <div className="mt-3">
-                <h3 className="text-sm font-medium text-gray-700 mb-2">Audio de la reunión</h3>
-                <audio src={audioUrl} controls className="w-full mb-2" />
-                <Button variant="outline" size="sm" onClick={handleDownload} className="w-full justify-center" disabled={!recordingData?.file_path}>
-                    <Download className="h-4 w-4 mr-1" /> Descargar Audio
-                </Button>
-                </div>
-            ) : audioUrlError ? (
-                <p className="text-sm text-red-600 mt-2">{audioUrlError}</p>
-            ) : (
-                <p className="text-sm text-gray-500 mt-2">Cargando audio...</p>
-            )}
+                
+                {audioUrl ? (
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-medium text-gray-700">Audio de la reunión</h3>
+                    <audio src={audioUrl} controls className="w-full" />
+                    <Button variant="outline" size="sm" onClick={handleDownload} className="w-full justify-center" disabled={!recordingData?.file_path}>
+                        <Download className="h-4 w-4 mr-1" /> Descargar Audio
+                    </Button>
+                  </div>
+                ) : audioUrlError ? (
+                    <p className="text-sm text-red-600 mt-2">{audioUrlError}</p>
+                ) : (
+                    <div className="flex items-center text-sm text-gray-500 mt-2">
+                      <Spinner className="h-4 w-4 mr-2"/> Cargando audio...
+                    </div>
+                )}
+              </CardContent>
             </Card>
             
-            <div className="mb-6"><Separator /></div>
-            
-            <div className="mb-6">
-              <h2 className="text-xl font-semibold mb-3">Transcripción</h2>
-              
-              {isTranscriptionProcessing && !hasTranscription && (
-                <div className="flex items-center justify-center p-6 bg-gray-50 rounded-lg border border-gray-200">
-                  <Loader className="h-5 w-5 mr-2 animate-spin text-funnl-primary" />
-                  <p className="text-gray-600">Generando transcripción, por favor espera...</p>
-                </div>
-              )}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <FileText className="h-5 w-5 mr-2 text-funnl-primary"/> Transcripción
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isProcessing && !hasTranscription && (
+                  <div className="flex items-center justify-center p-6 bg-gray-50 rounded-lg border border-gray-200">
+                    <Loader className="h-5 w-5 mr-2 animate-spin text-funnl-primary" />
+                    <p className="text-gray-600">Generando transcripción...</p>
+                  </div>
+                )}
 
-              {isErrorTranscriptionPolling && !isTranscriptionProcessing && (
-                 <div className="p-4 border-red-200 bg-red-50 rounded-lg">
-                    <div className="flex items-start">
-                    <AlertCircle className="h-5 w-5 text-red-600 mr-2 flex-shrink-0" />
-                    <div>
-                        <h3 className="font-medium text-red-800 mb-1">Error al cargar transcripción</h3>
-                        <p className="text-sm text-red-700">{transcriptionPollingError?.message || "No se pudo obtener la transcripción."}</p>
-                    </div>
-                    </div>
-                </div>
-              )}
-
-              {hasTranscription ? (
-                  <TranscriptionViewerV2 recordingId={id} />
-              ) : !isTranscriptionProcessing && !isErrorTranscriptionPolling && !transcriptionFailed && (
-                 <div className="text-center p-6 bg-gray-50 rounded-lg border border-gray-200">
-                     <p className="text-gray-500">La transcripción aún no está disponible.</p>
-                 </div>
-              )}
-
-              {transcriptionFailed && (
-                 <div className="p-4 border-red-200 bg-red-50 rounded-lg">
-                    <div className="flex items-start">
-                    <AlertCircle className="h-5 w-5 text-red-600 mr-2 flex-shrink-0" />
-                    <div>
-                       <h3 className="font-medium text-red-800 mb-1">Error de Transcripción</h3>
-                       <p className="text-sm text-red-700">Falló la generación de la transcripción para esta grabación.</p>
-                    </div>
+                {transcriptionFailed && (
+                   <div className="p-4 border-red-200 bg-red-50 rounded-lg">
+                      <div className="flex items-start">
+                      <AlertCircle className="h-5 w-5 text-red-600 mr-2 flex-shrink-0" />
+                      <div>
+                         <h3 className="font-medium text-red-800 mb-1">Error de Procesamiento</h3>
+                         <p className="text-sm text-red-700">Falló la generación de la transcripción y/o análisis para esta grabación.</p>
+                      </div>
+                     </div>
                    </div>
-                 </div>
-              )}
+                )}
 
-            </div>
+                {hasTranscription ? (
+                    <TranscriptionViewerV2 recordingId={id} />
+                ) : !isProcessing && !transcriptionFailed && (
+                   <div className="text-center p-6 bg-gray-50 rounded-lg border border-gray-200">
+                       <p className="text-gray-500">La transcripción no está disponible o aún no se ha generado.</p>
+                       {recordingData.status === 'recorded' && audioUrl && (
+                          <Button onClick={() => triggerTranscriptionProcessing({ recordingId: id!, signedUrl: audioUrl! })} disabled={isTriggeringTranscription} size="sm" className="mt-3">
+                            {isTriggeringTranscription ? 'Iniciando...' : 'Iniciar Procesamiento Manualmente'}
+                          </Button>
+                       )}
+                   </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {hasAnalysis && !transcriptionFailed && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <BrainCircuit className="h-5 w-5 mr-2 text-funnl-secondary"/> Análisis AI
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {recordingData.summary && (
+                    <div>
+                      <h4 className="text-md font-semibold mb-1 text-gray-800">Resumen</h4>
+                      <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-md border border-gray-100">{recordingData.summary}</p>
+                    </div>
+                  )}
+
+                  {recordingData.key_points && recordingData.key_points.length > 0 && (
+                    <div>
+                      <h4 className="text-md font-semibold mb-2 text-gray-800">Puntos Clave / Acciones</h4>
+                      <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700">
+                        {recordingData.key_points.map((point, index) => (
+                          <li key={index}>{point}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {isProcessing && hasTranscription && !hasAnalysis && !transcriptionFailed && (
+               <div className="flex items-center justify-center p-4 text-sm text-gray-500">
+                 <Loader className="h-4 w-4 mr-2 animate-spin" />
+                 Generando análisis AI...
+               </div>
+            )}
+
         </div>
         
         <BottomNavbar />

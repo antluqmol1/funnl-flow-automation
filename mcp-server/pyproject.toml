@@ -9,5 +9,6 @@ dependencies = [
     "httpx>=0.28.1",
     "hubspot-api-client>=11.1.0",
     "mcp[cli]>=1.6.0",
+    "openai>=1.75.0",
     "supabase>=2.15.0",
 ]

@@ -24,6 +24,9 @@ try:
 except ImportError as e:
     logging.warning(f"No se pudieron importar módulos de HubSpot: {e}. Algunas herramientas no estarán disponibles.")
 
+# Importar funciones de Meetings Tools
+from meetings_tools.analysis import analyze_transcription
+
 # Configurar logging
 logging.basicConfig(level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")))
 logger = logging.getLogger(__name__)
@@ -110,6 +113,16 @@ async def get_ticket(id: str, properties_to_retrieve: str) -> dict:
     try:
         return await obtener_ticket_hubspot(id, properties_to_retrieve)
     except Exception as e:
+        return {"error": str(e)}
+
+# Registro de herramientas para Meetings
+@mcp.tool()
+async def analyze_meeting_transcription(transcription_text: str) -> dict:
+    """Analiza una transcripción para obtener resumen y puntos clave."""
+    try:
+        return await analyze_transcription(transcription_text)
+    except Exception as e:
+        logger.error(f"Error en la herramienta analyze_meeting_transcription: {str(e)}")
         return {"error": str(e)}
 
 # Herramientas de análisis

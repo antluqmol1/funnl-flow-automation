@@ -170,26 +170,44 @@ router.post('/:recordingId/process', (req: Request, res: Response, next: NextFun
             const transcription = transcriptionResult.text;
             console.log(`[Routes][Transcriptions] Transcripción obtenida para ${recordingId} (longitud: ${transcription.length})`);
 
-            // --- 6. Generar Resumen y Puntos Clave (Comentado Temporalmente) ---
+            // --- 6. Generar Resumen y Puntos Clave (Usando MCP) ---
             let summary: string | null = null;
-            let keyPoints: string[] | null = null;
-            // console.log(`[Routes][Transcriptions] Generando análisis AI para ${recordingId}...`);
-            // try {
-            //     const aiAnalysis = await generateAiAnalysis(transcription);
-            //     summary = aiAnalysis.summary;
-            //     keyPoints = aiAnalysis.keyPoints;
-            //     console.log(`[Routes][Transcriptions] Análisis AI generado para ${recordingId}`);
-            // } catch (aiError) {
-            //     console.error(`[Routes][Transcriptions] Error al generar análisis AI para ${recordingId}:`, aiError);
-            // }
+            let keyPoints: string[] = []; // Inicializar como array vacío
+            console.log(`[Routes][Transcriptions] Solicitando análisis AI vía MCP para ${recordingId}...`);
+            try {
+                // Obtener instancia del cliente MCP
+                const mcpClient = await initMCP();
+
+                // Llamar a la herramienta directamente
+                const aiAnalysisResult = await mcpClient.callMCPToolDirectly(
+                    'analyze_meeting_transcription',
+                    { transcription_text: transcription } // Pasar argumento
+                );
+
+                // Verificar si hubo error devuelto por la herramienta
+                if (aiAnalysisResult && aiAnalysisResult.error) {
+                    console.error(`[Routes][Transcriptions] Error devuelto por herramienta MCP analyze_meeting_transcription para ${recordingId}:`, aiAnalysisResult.error);
+                    // Decidir si continuar sin análisis o marcar como error parcial?
+                    // Por ahora, continuamos sin análisis
+                } else if (aiAnalysisResult && aiAnalysisResult.summary && Array.isArray(aiAnalysisResult.key_points)) {
+                    summary = aiAnalysisResult.summary;
+                    keyPoints = aiAnalysisResult.key_points;
+                    console.log(`[Routes][Transcriptions] Análisis AI vía MCP obtenido con éxito para ${recordingId}`);
+                } else {
+                    console.warn(`[Routes][Transcriptions] Respuesta inesperada o incompleta de herramienta MCP analyze_meeting_transcription para ${recordingId}:`, aiAnalysisResult);
+                }
+            } catch (aiError) {
+                console.error(`[Routes][Transcriptions] Error al llamar a la herramienta MCP analyze_meeting_transcription para ${recordingId}:`, aiError);
+                // Continuar sin análisis en caso de error de comunicación con MCP
+            }
 
             // --- 7. Actualizar Registro Final en DB (usando cliente de usuario) --- 
             console.log(`[Routes][Transcriptions] Actualizando registro final en DB para ${recordingId}...`);
             const finalUpdatePayload = {
                 status: 'completed' as const,
                 transcription,
-                summary: summary, // <-- Usar la variable (será null si IA está comentada)
-                key_points: keyPoints, // <-- Usar la variable (será null si IA está comentada)
+                summary: summary, // <-- Usar variable (puede ser null)
+                key_points: keyPoints, // <-- Usar variable (puede ser array vacío)
                 updated_at: new Date().toISOString(),
             };
             const { data: updateData, error: finalUpdateError } = await supabaseUserClient // <-- USA CLIENTE DE USUARIO

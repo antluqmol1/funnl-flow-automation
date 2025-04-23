@@ -142,6 +142,67 @@ export class MCPClient {
         return finalText.join("\n");
     }
 
+    // Nuevo método para llamar directamente a una herramienta MCP
+    async callMCPToolDirectly(toolName: string, toolArgs?: { [x: string]: unknown }): Promise<any> {
+        console.log(`[MCPClient] Calling tool directly: ${toolName} with args:`, toolArgs);
+        if (!this.mcp) {
+            throw new Error("MCP client not connected.");
+        }
+
+        // Verificar si la herramienta existe (opcional pero recomendado)
+        const toolExists = this.tools.some(tool => tool.name === toolName);
+        if (!toolExists) {
+            console.error(`[MCPClient] Attempted to call non-existent tool: ${toolName}`);
+            // Listar herramientas disponibles para ayudar a depurar
+            console.log("[MCPClient] Available tools:", this.tools.map(t => t.name));
+            throw new Error(`Tool '${toolName}' not found or not registered by the MCP server.`);
+        }
+
+        try {
+            const result = await this.mcp.callTool({
+                name: toolName,
+                arguments: toolArgs,
+            });
+            console.log(`[MCPClient] Result from direct call to ${toolName}:`, result);
+
+            // --- INICIO: Lógica de procesamiento de resultado mejorada ---
+            if (result && Array.isArray(result.content) && result.content.length > 0) {
+                const firstContent = result.content[0];
+                if (firstContent && firstContent.type === 'text' && typeof firstContent.text === 'string') {
+                    // Encontramos el string JSON esperado
+                    try {
+                        const parsedJson = JSON.parse(firstContent.text);
+                        console.log(`[MCPClient] Successfully parsed JSON from tool ${toolName}`);
+                        return parsedJson; // Devolver el objeto parseado
+                    } catch (e) {
+                        console.error(`[MCPClient] Failed to parse JSON content from tool ${toolName}:`, e);
+                        // Devolver error o el string crudo si falla el parseo?
+                        // Por ahora, lanzamos un error para indicar el problema de formato
+                        throw new Error(`Failed to parse JSON response from tool ${toolName}. Raw text: ${firstContent.text}`);
+                    }
+                } else {
+                    // El primer elemento de content no tiene la estructura esperada
+                    console.warn(`[MCPClient] Unexpected structure in result.content[0] for tool ${toolName}:`, firstContent);
+                    // Devolver el contenido crudo del primer elemento si no es texto?
+                    return firstContent;
+                }
+            } else if (result && typeof result.content !== 'undefined') {
+                // Si result.content existe pero no es el array esperado, devolverlo tal cual
+                console.warn(`[MCPClient] result.content for tool ${toolName} was not the expected array structure:`, result.content);
+                return result.content;
+            } else {
+                // Si no hay content, devolver el objeto de resultado completo (o null/error?)
+                console.warn(`[MCPClient] No content found in result for tool ${toolName}. Returning full result object.`);
+                return result;
+            }
+            // --- FIN: Lógica de procesamiento de resultado mejorada ---
+
+        } catch (error) {
+            console.error(`[MCPClient] Error calling tool ${toolName} directly:`, error);
+            throw error; // Re-lanzar el error para que el llamador lo maneje
+        }
+    }
+
     async chatLoop() {
         const readline = await import("readline/promises");
         const rl = readline.createInterface({

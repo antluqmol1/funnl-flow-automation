@@ -98,8 +98,8 @@ export interface Recording {
   id: string;
   title: string;
   contact_id: string | null;
-  date: string; // Este campo parece no usarse y no estar en la BD, considerar eliminar
-  duration: string; // Debería ser number (duration_seconds) o string?
+  // date: string; // Este campo parece no usarse y no estar en la BD, considerar eliminar
+  // duration: string; // Debería ser number (duration_seconds) o string?
   transcription: string | null;
   summary: string | null;
   key_points: string[] | null;
@@ -107,7 +107,7 @@ export interface Recording {
   updated_at: string | null;
   file_path?: string | null;
   user_id?: string | null;
-  status?: 'recorded' | 'transcribing' | 'completed' | 'failed' | 'pending_transcription' | null; // Añadir status
+  status?: 'recorded' | 'processing' | 'completed' | 'failed' | null; // <-- Actualizado
   // Campos potenciales de la tabla meeting_recordings:
   file_name?: string | null;
   size_bytes?: number | null;
