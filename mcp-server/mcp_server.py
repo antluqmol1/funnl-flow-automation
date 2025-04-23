@@ -26,6 +26,7 @@ except ImportError as e:
 
 # Importar funciones de Meetings Tools
 from meetings_tools.analysis import analyze_transcription
+from meetings_tools.suggestions import generate_meeting_suggestions
 
 # Configurar logging
 logging.basicConfig(level=getattr(logging, os.getenv("LOG_LEVEL", "INFO")))
@@ -120,9 +121,10 @@ async def get_ticket(id: str, properties_to_retrieve: str) -> dict:
 async def analyze_meeting_transcription(transcription_text: str) -> dict:
     """Analiza una transcripción para obtener resumen y puntos clave."""
     try:
-        return await analyze_transcription(transcription_text)
+        result = await analyze_transcription(transcription_text)
+        return result
     except Exception as e:
-        logger.error(f"Error en la herramienta analyze_meeting_transcription: {str(e)}")
+        logger.error(f"Error en wrapper de analyze_meeting_transcription: {str(e)}")
         return {"error": str(e)}
 
 # Herramientas de análisis
@@ -205,6 +207,26 @@ async def analyze_activities(activities: list, user_id: str, time_range: dict = 
     except Exception as e:
         logger.error(f"Error analizando actividades: {str(e)}")
         return {"error": str(e)}
+
+# --- NUEVO: Registrar herramienta de sugerencias ---
+@mcp.tool()
+async def generate_meeting_suggestions_tool(
+    transcription_text: str,
+    summary: str | None = None,
+    key_points: list | None = None
+) -> list[dict]:
+    """Genera acciones sugeridas basadas en la transcripción de una reunión."""
+    try:
+        suggestions = await generate_meeting_suggestions(
+            transcription_text=transcription_text,
+            summary=summary,
+            key_points=key_points
+        )
+        return suggestions
+    except Exception as e:
+        logger.error(f"Error en wrapper de generate_meeting_suggestions_tool: {str(e)}")
+        return []
+# --- FIN NUEVO ---
 
 if __name__ == "__main__":
     logger.info("Iniciando servidor MCP...")
