@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 import { PostgrestError } from "@supabase/supabase-js";
 
 // Define interfaces for our data models
@@ -98,13 +98,21 @@ export interface Recording {
   id: string;
   title: string;
   contact_id: string | null;
-  date: string;
-  duration: string;
+  date: string; // Este campo parece no usarse y no estar en la BD, considerar eliminar
+  duration: string; // Debería ser number (duration_seconds) o string?
   transcription: string | null;
   summary: string | null;
   key_points: string[] | null;
   created_at: string | null;
   updated_at: string | null;
+  file_path?: string | null;
+  user_id?: string | null;
+  status?: 'recorded' | 'transcribing' | 'completed' | 'failed' | 'pending_transcription' | null; // Añadir status
+  // Campos potenciales de la tabla meeting_recordings:
+  file_name?: string | null;
+  size_bytes?: number | null;
+  mime_type?: string | null;
+  duration_seconds?: number | null; // Usar este en lugar de duration?
 }
 
 export interface Automation {
@@ -434,31 +442,48 @@ export const getFunnelStagesWithContacts = async (): Promise<FunnelStageWithCont
 
 // Recordings services
 export const getRecordings = async (): Promise<Recording[]> => {
+  console.log('[supabaseService][getRecordings] Intentando obtener grabaciones...');
+
+  // La consulta es simple porque RLS filtra por usuario automáticamente
   const { data, error } = await supabase
-    .from('recordings')
-    .select('*, contact:contacts(*)');
+    .from('meeting_recordings')
+    .select('*')
+    .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('Error fetching recordings:', error);
+    console.error('[supabaseService][getRecordings] Error al obtener grabaciones:', error);
     throw error;
   }
 
+  console.log(`[supabaseService][getRecordings] Grabaciones obtenidas: ${data?.length ?? 0}`);
   return data || [];
 };
 
-export const getRecordingById = async (id: string) => {
+export const getRecordingById = async (id: string): Promise<Recording | null> => {
+  console.log(`[supabaseService][getRecordingById] Intentando obtener grabación ID: ${id}`);
   const { data, error } = await supabase
-    .from('recordings')
-    .select('*, contact:contacts(*)')
+    .from('meeting_recordings')
+    .select('*')
     .eq('id', id)
-    .maybeSingle() as { data: (Recording & { contact: Contact }) | null, error: any };
+    .maybeSingle();
 
   if (error) {
-    console.error(`Error fetching recording with id ${id}:`, error);
-    throw error;
+    if (error.code === 'PGRST116') {
+      console.warn(`[supabaseService][getRecordingById] Grabación no encontrada (o acceso denegado por RLS) para ID: ${id}. Error: ${error.message}`);
+      return null;
+    } else {
+      console.error(`[supabaseService][getRecordingById] Error al obtener grabación ID ${id}:`, error);
+      throw error;
+    }
   }
 
-  return data;
+  if (data) {
+    console.log(`[supabaseService][getRecordingById] Grabación encontrada para ID: ${id}. Status: ${data.status}`);
+  } else {
+    console.log(`[supabaseService][getRecordingById] No se devolvieron datos para ID: ${id}, probablemente no encontrada.`);
+  }
+
+  return data as Recording | null;
 };
 
 // Automations services
@@ -858,6 +883,9 @@ export const createContact = async (contact: {
   status: string;
   hubspot_company_id?: string | null;
   stage_id?: string; // ID de la etapa del pipeline
+  value?: number | null;
+  probability?: number | null;
+  tags?: string[] | null;
 }): Promise<Contact> => {
   try {
     // Obtener la sesión actual para conseguir el ID del usuario

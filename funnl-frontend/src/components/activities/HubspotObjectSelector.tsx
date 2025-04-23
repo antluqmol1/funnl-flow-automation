@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Loader2, Search, Plus, X, User, Building, Briefcase, TicketIcon } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+import { supabase } from "@/lib/supabase";
 
 // URL de la API
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

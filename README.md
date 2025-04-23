@@ -40,22 +40,51 @@ Crea un archivo `.env.local` en la raíz del directorio `funnl-frontend`:
 NEXTAUTH_URL=http://localhost:3000
 NEXTAUTH_SECRET=tu_secreto_aqui
 
-# Variables de la base de datos
-DATABASE_URL=postgresql://usuario:password@localhost:5432/funnl
+# Variables de Supabase (usadas por el cliente Supabase @/lib/supabase)
+VITE_SUPABASE_URL=tu_url_de_supabase
+VITE_SUPABASE_ANON_KEY=tu_anon_key_de_supabase
 
-# Variables de Hubspot
-HUBSPOT_API_KEY=tu_api_key_de_hubspot
+# URL del backend principal (mcp-server)
+VITE_API_URL=http://localhost:8000
 
-# Variables de OpenAI
-NEXT_PUBLIC_OPENAI_API_KEY=tu_api_key_de_openai
+# Variables de OpenAI (si se usan directamente en el frontend)
+# NEXT_PUBLIC_OPENAI_API_KEY=tu_api_key_de_openai
+
+# --- HUBSPOT_API_KEY ya no es necesaria aquí ---
+# La conexión con HubSpot se gestiona a través del backend mcp-server
 ```
 
-Crea un archivo `.env` en la raíz del directorio `funnl-backend`:
+Crea un archivo `.env` en la raíz del directorio `funnl-backend` (si este backend aún usa alguna variable):
 
 ```
 PORT=3001
-HUBSPOT_API_KEY=tu_api_key_de_hubspot
+# OPENAI_API_KEY=tu_api_key_de_openai 
+# DATABASE_URL=postgresql://usuario:password@localhost:5432/funnl # Si usa Prisma
+SUPABASE_URL=tu_url_de_supabase # Si este backend interactúa con Supabase
+SUPABASE_SERVICE_KEY=tu_service_key_de_supabase # Si necesita permisos elevados
+```
+
+Crea un archivo `.env` en la raíz del directorio `mcp-server` (FastAPI Backend):
+
+```
+PORT=8000
 OPENAI_API_KEY=tu_api_key_de_openai
+
+# --- Clave de API de HubSpot --- 
+# ¡¡Obligatoria para la conexión global con HubSpot!!
+HUBSPOT_API_KEY=tu_api_key_de_hubspot 
+
+# Variables de Supabase (para validar tokens de usuario y acceder a datos)
+SUPABASE_URL=tu_url_de_supabase
+SUPABASE_SERVICE_KEY=tu_service_key_de_supabase # Necesaria para validar tokens
+
+# Variables OAuth de HubSpot (No usadas para la conexión básica, pero pueden ser usadas por otras funciones)
+# HUBSPOT_CLIENT_ID=...
+# HUBSPOT_CLIENT_SECRET=...
+# HUBSPOT_APP_ID=...
+# HUBSPOT_SCOPE=...
+# FRONTEND_URL=http://localhost:8080 # URL base del frontend para callbacks OAuth si se usan
+
 ```
 
 ### Instalación
@@ -152,19 +181,30 @@ npm run build
 
 Las contribuciones son bienvenidas. Por favor, abre un issue primero para discutir los cambios que te gustaría hacer.
 
-## Sincronización con HubSpot
+## Conexión y Sincronización con HubSpot (API Key)
 
-### Funcionamiento del flujo de sincronización
+El sistema utiliza una **API Key de HubSpot** configurada en el backend `mcp-server` para interactuar con HubSpot. Este enfoque simplificado se usa para la verificación del estado de conexión y potencialmente para operaciones de sincronización.
 
-El sistema actualmente implementa una sincronización bidireccional entre Supabase y HubSpot:
+### Verificación de Conexión
 
-1. **Vinculación de contactos existentes:**
-   - Los contactos que ya existen en Supabase se buscan en HubSpot por su email
-   - Si se encuentra una coincidencia, se guarda el ID de HubSpot en el contacto de Supabase
+*   El backend `mcp-server` expone un endpoint público `/hubspot/status` (GET).
+*   Este endpoint **no requiere autenticación de usuario**.
+*   Utiliza la variable de entorno `HUBSPOT_API_KEY` configurada en el servidor para realizar una llamada de verificación a la API de HubSpot.
+*   Devuelve `{"connected": true}` si la API Key es válida y la conexión es exitosa, o `{"connected": false}` junto con un mensaje de error en caso contrario.
+*   El componente `HubspotConfig.tsx` en el frontend llama a este endpoint para mostrar el estado de la conexión del servidor con HubSpot. El botón en este componente sirve para **re-verificar** el estado, no para iniciar una conexión.
 
-2. **Importación desde HubSpot:**
-   - Se obtienen todos los contactos desde HubSpot
-   - Si un contacto no existe en Supabase (verificado por email), se importa como nuevo
+### Funcionamiento del flujo de sincronización (Usando API Key del Servidor)
+
+El sistema implementa mecanismos de sincronización entre Supabase y HubSpot utilizando la **API Key configurada en el servidor `mcp-server`**. Las operaciones de sincronización (como las iniciadas por `/sync` o `/sync-all` en `mcp-server/routers/hubspot.py`) se ejecutan en el backend usando esta clave global.
+
+1.  **Vinculación de contactos existentes:**
+    *   Los contactos que ya existen en Supabase se buscan en HubSpot (usando la API Key del servidor) por su email.
+    *   Si se encuentra una coincidencia, se guarda el ID de HubSpot en el contacto de Supabase.
+2.  **Importación desde HubSpot:**
+    *   Se obtienen contactos desde HubSpot (usando la API Key del servidor).
+    *   Si un contacto no existe en Supabase (verificado por email), se importa como nuevo, aplicando valores por defecto si es necesario.
+
+**Nota:** Aunque el backend contiene código relacionado con OAuth 2.0 (`/auth`, `/callback`), el flujo principal de verificación de estado implementado actualmente se basa en la API Key global.
 
 ### Campos obligatorios en la tabla "contacts"
 
@@ -193,12 +233,11 @@ La tabla `contacts` en Supabase tiene las siguientes restricciones NOT NULL:
 Para adaptar la sincronización a tus necesidades:
 
 1. **Modificar restricciones de la base de datos:**
-   - Hacer que el campo `phone` sea nullable en la tabla `contacts`
-   - O añadir un valor predeterminado como cadena vacía
-
+    *   Considera hacer campos como `phone` nullable en la tabla `contacts` si los datos de HubSpot suelen venir incompletos.
 2. **Ajustar el código:**
-   - El código de sincronización está en `mcp-server/routers/hubspot.py`
-   - Puedes modificar los valores predeterminados para los campos importados
+    *   La lógica principal de las rutas de HubSpot está en `mcp-server/routers/hubspot.py`.
+    *   Las funciones específicas de interacción con la API de HubSpot están en `mcp-server/hubspot_tools/`.
+    *   Puedes modificar los valores predeterminados para los campos importados o la lógica de sincronización en estos archivos.
 
 ### Solución de problemas
 

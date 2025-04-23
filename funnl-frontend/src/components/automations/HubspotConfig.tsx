@@ -4,15 +4,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CheckCircle2, Loader2, XCircle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-import { supabase } from '@/integrations/supabase/client';
+// No necesitamos supabase aquí si usamos API Key global
+// import { supabase } from '@/lib/supabase'; 
 
-// URL de la API
+// URL de la API sigue apuntando al backend (mcp-server)
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 interface HubspotConfigProps {
   onConfigured?: (isConfigured: boolean) => void;
-  compact?: boolean; // Nueva propiedad para mostrar versión compacta
-  onRefresh?: () => void; // Callback para refrescar datos después de conectar
+  compact?: boolean; 
+  onRefresh?: () => void; 
 }
 
 export default function HubspotConfig({ onConfigured, compact = false, onRefresh }: HubspotConfigProps) {
@@ -21,95 +22,62 @@ export default function HubspotConfig({ onConfigured, compact = false, onRefresh
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Verificar estado de la conexión al montar el componente
-  useEffect(() => {
-    const loadStatus = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          // Si no hay sesión, no podemos verificar. Asumimos no configurado.
-          setIsConfigured(false);
-          if (onConfigured) onConfigured(false);
-          setIsLoading(false);
-          return;
-        }
-
-        const response = await fetch(`${API_URL}/hubspot/status`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Accept': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error(`Error al cargar estado: ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        setIsConfigured(data.connected);
-        if (onConfigured) onConfigured(data.connected);
-        
-      } catch (err) {
-        console.error('Error loading HubSpot status:', err);
-        setError(err instanceof Error ? err.message : 'Error al cargar estado de HubSpot');
-        setIsConfigured(false); // Asumir no configurado si hay error
-        if (onConfigured) onConfigured(false);
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "No se pudo verificar el estado de la conexión con HubSpot.",
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadStatus();
-  }, [toast, onConfigured]);
-
-  const handleConnect = async () => {
+  // Función para cargar el estado (simplificada)
+  const loadStatus = async () => {
     setIsLoading(true);
     setError(null);
-
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No hay sesión activa. Por favor, inicia sesión de nuevo.');
-
-      const response = await fetch(`${API_URL}/hubspot/auth`, {
+      // Llamada directa a /status sin autenticación de usuario
+      const response = await fetch(`${API_URL}/hubspot/status`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          // No se necesita encabezado Authorization
           'Accept': 'application/json'
         }
       });
 
+      // Procesar la respuesta del backend
+      const data = await response.json();
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Error al iniciar autenticación: ${response.statusText}`);
+        // Usar el mensaje de error del backend si existe
+        throw new Error(data.message || data.detail || `Error ${response.status}: ${response.statusText}`);
       }
 
-      const { auth_url } = await response.json();
-      
-      if (!auth_url) {
-        throw new Error('No se recibió la URL de autorización desde el backend.');
-      }
-      
-      // Redirigir a HubSpot para autenticación
-      window.location.href = auth_url;
+      setIsConfigured(data.connected);
+      if (onConfigured) onConfigured(data.connected);
+      if (!data.connected && data.message) {
+        // Mostrar mensaje del backend si no está conectado (ej. API Key inválida)
+        setError(data.message);
+      } 
+
     } catch (err) {
-      console.error('Error connecting to HubSpot:', err);
-      setError(err instanceof Error ? err.message : 'Error conectando con HubSpot');
+      console.error('Error loading HubSpot status:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Error al cargar estado de HubSpot';
+      setError(errorMessage);
+      setIsConfigured(false); // Asumir no configurado si hay error
+      if (onConfigured) onConfigured(false);
       toast({
         variant: "destructive",
         title: "Error",
-        description: err instanceof Error ? err.message : "No se pudo iniciar la conexión con HubSpot.",
+        description: errorMessage,
       });
-      setIsLoading(false); // Reiniciamos el loading si hay error
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Version compacta del componente
+  // Cargar estado al montar
+  useEffect(() => {
+    loadStatus();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // No necesita dependencias complejas ahora
+
+  // Refrescar estado (se puede llamar desde onRefresh o un botón)
+  const handleRefreshStatus = () => {
+    loadStatus();
+  };
+
+  // Version compacta
   if (compact) {
     return (
       <div className={`flex items-center ${isConfigured ? 'justify-between' : 'justify-center'} w-full`}>
@@ -118,63 +86,48 @@ export default function HubspotConfig({ onConfigured, compact = false, onRefresh
             <CheckCircle2 className="h-5 w-5 text-green-500" />
             <span className="text-sm text-green-700">Conectado a HubSpot</span>
             
-            {onRefresh && (
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="ml-2" 
-                onClick={onRefresh} 
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-              </Button>
-            )}
+            {/* Botón para refrescar estado */} 
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              className="ml-2" 
+              onClick={handleRefreshStatus} // Usar la nueva función
+              disabled={isLoading}
+              title="Refrescar estado"
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+            </Button>
           </div>
         ) : (
-          <Button 
-            onClick={handleConnect} 
-            disabled={isLoading}
-            className="flex items-center gap-2 bg-orange-600 hover:bg-orange-700 text-white"
-          >
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <>
-                <img 
-                  src="/hubspot-icon.png" 
-                  alt="HubSpot" 
-                  className="h-4 w-4" 
-                  onError={(e) => {
-                    // Si la imagen no carga, ocultarla
-                    e.currentTarget.style.display = 'none';
-                  }}
-                />
-                Conectar con HubSpot
-              </>
-            )}
-          </Button>
+          // Mostrar estado de error si no está conectado
+          <div className="flex items-center gap-2 text-red-700">
+             <XCircle className="h-5 w-5 text-red-500" />
+             <span className="text-sm">No conectado a HubSpot</span>
+             {isLoading && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
+          </div>
         )}
         
+        {/* Mostrar mensaje de error detallado si existe */} 
         {error && !isLoading && (
-          <div className="text-xs text-red-500 mt-1">
-            Error: {error}
+          <div className="text-xs text-red-500 mt-1 w-full text-center">
+            {error}
           </div>
         )}
       </div>
     );
   }
 
-  // Versión completa del componente para la página de configuración
+  // Versión completa (página de configuración)
   return (
     <Card>
       <CardHeader>
         <CardTitle>Configuración de HubSpot</CardTitle>
         <CardDescription>
-          Conecta tu cuenta de HubSpot para sincronizar tus contactos, deals, y más.
+          Verifica el estado de la conexión con HubSpot configurada en el servidor.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -189,44 +142,49 @@ export default function HubspotConfig({ onConfigured, compact = false, onRefresh
             {isConfigured ? (
               <div className="flex items-center text-green-700">
                 <CheckCircle2 className="h-5 w-5 mr-2 text-green-500" />
-                <span>Conectado a HubSpot</span>
+                <span>Conectado a HubSpot (API Key válida)</span>
               </div>
             ) : (
               <div className="flex items-center text-red-700">
                 <XCircle className="h-5 w-5 mr-2 text-red-500" />
                 <span>No conectado a HubSpot</span>
+                 {isLoading && <Loader2 className="h-4 w-4 animate-spin ml-2" />}
               </div>
             )}
           </div>
 
+          {/* Botón para Refrescar Estado */} 
           <Button 
-            onClick={handleConnect} 
+            variant="outline" 
+            onClick={handleRefreshStatus} 
             disabled={isLoading}
-            className={isConfigured ? "bg-yellow-600 hover:bg-yellow-700" : "bg-orange-600 hover:bg-orange-700"}
           >
             {isLoading ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Conectando...
-              </>
-            ) : isConfigured ? (
-              "Reconectar"
+               <Loader2 className="h-4 w-4 animate-spin mr-2" />
             ) : (
-              "Conectar con HubSpot"
+              <RefreshCw className="h-4 w-4 mr-2" />
             )}
+            Verificar Conexión
           </Button>
           
+          {/* Opcional: Mantener el botón onRefresh si se pasa como prop */}
           {onRefresh && isConfigured && (
             <Button 
               variant="outline" 
               onClick={onRefresh} 
               disabled={isLoading}
+              title="Actualizar datos relacionados"
             >
               <RefreshCw className="h-4 w-4 mr-2" />
               Actualizar datos
             </Button>
           )}
         </div>
+        {!isConfigured && !isLoading && (
+           <p className="text-sm text-muted-foreground mt-2">
+             La conexión se basa en la API Key configurada en el servidor. Si no está conectado, verifica la configuración del backend.
+           </p>
+        )}
       </CardContent>
     </Card>
   );

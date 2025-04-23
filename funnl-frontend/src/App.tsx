@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from './contexts/AuthContext'
+import { UserProvider } from './contexts/UserContext';
 import LoginPage from './pages/auth/login'
 import RegisterPage from './pages/auth/register'
 import ResetPasswordPage from './pages/auth/reset-password'
@@ -30,36 +31,38 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AuthProvider>
-        <Router>
-          <Routes>
-            {/* Rutas públicas */}
-            <Route path="/" element={<Index />} />
-            <Route path="/funnel" element={<Funnel />} />
-            <Route path="/pipeline" element={<Pipeline />} />
+        <UserProvider>
+          <Router>
+            <Routes>
+              {/* Rutas públicas */}
+              <Route path="/" element={<Index />} />
+              <Route path="/funnel" element={<Funnel />} />
+              <Route path="/pipeline" element={<Pipeline />} />
 
-            {/* Rutas de autenticación */}
-            <Route path="/auth/login" element={<LoginPage />} />
-            <Route path="/auth/register" element={<RegisterPage />} />
-            <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
-            <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
-            <Route path="/auth/hubspot-callback" element={<HubSpotCallback />} />
-            <Route path="/auth/hubspot/callback" element={<HubSpotCallback />} />
+              {/* Rutas de autenticación */}
+              <Route path="/auth/login" element={<LoginPage />} />
+              <Route path="/auth/register" element={<RegisterPage />} />
+              <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+              <Route path="/auth/hubspot-callback" element={<HubSpotCallback />} />
+              <Route path="/auth/hubspot/callback" element={<HubSpotCallback />} />
 
-            {/* Rutas protegidas */}
-            <Route path="/" element={<ProtectedRoute />}>
-              <Route path="dashboard" element={<DashboardPage />} />
-              <Route path="agent" element={<Agent />} />
-              <Route path="automations" element={<Automations />} />
-              <Route path="meetings" element={<Meetings />} />
-              <Route path="settings" element={<Settings />} />
-              <Route path="contact/:id" element={<ContactDetail />} />
-              <Route path="recording/:id" element={<RecordingDetail />} />
-            </Route>
+              {/* Rutas protegidas */}
+              <Route path="/" element={<ProtectedRoute />}>
+                <Route path="dashboard" element={<DashboardPage />} />
+                <Route path="agent" element={<Agent />} />
+                <Route path="automations" element={<Automations />} />
+                <Route path="meetings" element={<Meetings />} />
+                <Route path="settings" element={<Settings />} />
+                <Route path="contact/:id" element={<ContactDetail />} />
+                <Route path="recording/:id" element={<RecordingDetail />} />
+              </Route>
 
-            {/* Ruta 404 */}
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Router>
+              {/* Ruta 404 */}
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Router>
+        </UserProvider>
       </AuthProvider>
     </TooltipProvider>
   </QueryClientProvider>

@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from "@/integrations/supabase/client";
+import { supabase } from "@/lib/supabase";
 
 // URL de la API del servidor
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';

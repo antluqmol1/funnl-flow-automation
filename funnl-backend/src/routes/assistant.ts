@@ -5,8 +5,10 @@ import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import WhisperService from '../services/whisperService';
+import { WhisperService } from '../services/whisperService';
 import cors from 'cors';
+import { supabase } from '../lib/supabase';
+import { initMCP, promiseWithTimeout } from '../lib/utils';
 
 const router = express.Router();
 
@@ -66,105 +68,6 @@ const upload = multer({
     limits: { fileSize: 25 * 1024 * 1024 }, // 25MB máximo según límites de OpenAI
     fileFilter
 });
-
-/**
- * Singleton para la instancia MCP
- */
-let mcpClientInstance: MCPClient | null = null;
-let mcpServerProcess: any = null;
-
-/**
- * Inicializa el cliente MCP y el servidor
- */
-async function initMCP() {
-    if (!mcpClientInstance) {
-        try {
-            // Iniciar el servidor MCP en un proceso separado
-            const serverPath = path.resolve(__dirname, '../../../../mcp-server/mcp_server.py');
-
-            console.log(`Ruta del servidor MCP: ${serverPath}`);
-
-            if (!fs.existsSync(serverPath)) {
-                console.error(`Error: El archivo del servidor MCP no existe en la ruta: ${serverPath}`);
-                throw new Error(`El archivo del servidor MCP no existe en la ruta: ${serverPath}`);
-            }
-
-            // Iniciar el cliente MCP
-            console.log('Inicializando cliente MCP...');
-            mcpClientInstance = new MCPClient();
-            await mcpClientInstance.connectToServer(serverPath);
-            console.log('Cliente MCP inicializado correctamente');
-
-            return mcpClientInstance;
-        } catch (error) {
-            console.error('Error al inicializar el cliente MCP:', error);
-            throw error;
-        }
-    }
-
-    return mcpClientInstance;
-}
-
-// Intentar inicializar MCP al cargar el módulo
-initMCP().catch(err => {
-    console.error('Error al inicializar MCP durante la carga:', err);
-});
-
-/**
- * Limpia todos los archivos temporales en el directorio de uploads
- * que tengan más de cierta antigüedad
- */
-function cleanupOldFiles(maxAgeMinutes = 60) {
-    const uploadsDir = path.join(__dirname, '../../uploads');
-    if (!fs.existsSync(uploadsDir)) return;
-
-    const now = Date.now();
-    const maxAgeMs = maxAgeMinutes * 60 * 1000;
-
-    try {
-        const files = fs.readdirSync(uploadsDir);
-        for (const file of files) {
-            const filePath = path.join(uploadsDir, file);
-            const stats = fs.statSync(filePath);
-            const fileAgeMs = now - stats.mtimeMs;
-
-            if (fileAgeMs > maxAgeMs) {
-                try {
-                    fs.unlinkSync(filePath);
-                    console.log(`Eliminado archivo antiguo: ${file}`);
-                } catch (e) {
-                    console.error(`Error al eliminar archivo antiguo ${file}:`, e);
-                }
-            }
-        }
-    } catch (e) {
-        console.error('Error al limpiar archivos antiguos:', e);
-    }
-}
-
-// Limpiar archivos antiguos al cargar el módulo
-cleanupOldFiles();
-
-// Programar limpieza periódica (cada hora)
-setInterval(() => cleanupOldFiles(), 60 * 60 * 1000);
-
-/**
- * Establece un timeout para una promesa
- * @param promise La promesa a la que se le aplicará el timeout
- * @param ms Milisegundos para el timeout
- * @param errorMessage Mensaje de error opcional
- */
-function promiseWithTimeout<T>(promise: Promise<T>, ms: number, errorMessage?: string): Promise<T> {
-    // Crear una promesa que se resuelve después de ms milisegundos
-    const timeout = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-            reject(new Error(errorMessage || `Timeout después de ${ms}ms`));
-        }, ms);
-    });
-
-    // Devolver la promesa que termine primero (la original o el timeout)
-    return Promise.race([promise, timeout]);
-}
 
 /**
  * Procesa consultas de texto con el asistente AI

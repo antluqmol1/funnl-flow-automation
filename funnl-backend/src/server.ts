@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import assistantRoutes from './routes/assistant';
+import transcriptionRoutes from './routes/transcriptions';
 import path from 'path';
 import fs from 'fs';
 
@@ -35,6 +36,9 @@ app.use((req, res, next) => {
 // Rutas
 app.use('/api/assistant', assistantRoutes);
 
+// Ruta específica para transcripciones
+app.use('/api/transcriptions', transcriptionRoutes);
+
 // Ruta de prueba para verificar que el servidor está funcionando
 app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -56,6 +60,7 @@ app.listen(PORT, () => {
     console.log(`- GET /api/health - Verificar estado del servidor`);
     console.log(`- POST /api/assistant/query - Consultar al asistente con texto`);
     console.log(`- POST /api/assistant/audio - Enviar audio para transcripción`);
+    console.log(`- POST /api/transcriptions/:recordingId - Procesar grabación existente`);
 });
 
 export default app; 
