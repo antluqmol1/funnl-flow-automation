@@ -1,38 +1,50 @@
 import React from 'react';
 import ContactCard from './ContactCard';
-import { type Contact } from '@/services/supabaseService';
+import { type Contact, type Deal, type FunnelStageWithItems } from '@/services/supabaseService';
+import DealCard from '../pipeline/DealCard';
 import { PlusCircle, Users, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/services/supabaseService';
 
-interface FunnelStageType {
-  id: number;
-  name: string;
-  color: string;
-  contacts: (Contact & { tasksCount?: number })[];
-}
-
 interface FunnelStageProps {
-  stage: FunnelStageType;
+  stage: FunnelStageWithItems;
+  isSalesFunnel?: boolean;
   onAddContact?: (stageId: number) => void;
+  onAddDeal?: (stageId: number) => void;
+  onContactDeleted?: (contactId: string) => void;
+  onDealDeleted?: (dealId: string) => void;
 }
 
-const FunnelStage: React.FC<FunnelStageProps> = ({ stage, onAddContact }) => {
+const FunnelStage: React.FC<FunnelStageProps> = ({ 
+  stage, 
+  isSalesFunnel = false, 
+  onAddContact, 
+  onAddDeal, 
+  onContactDeleted, 
+  onDealDeleted 
+}) => {
   const [collapsed, setCollapsed] = React.useState(false);
   
-  // Calcular el valor total de la etapa
-  const totalValue = stage.contacts.reduce((sum, contact) => {
-    return sum + (contact.value || 0);
+  const totalValue = stage.items.reduce((sum, item) => {
+    const value = 'value' in item ? item.value : 0;
+    return sum + (value || 0);
   }, 0);
   
-  // Calcular la tasa de conversión si hay contactos en la etapa
-  const conversionRate = stage.contacts.length 
-    ? Math.round(stage.contacts.filter(c => c.probability && c.probability > 50).length / stage.contacts.length * 100)
+  const conversionRate = stage.items.length 
+    ? Math.round(stage.items.filter(item => 'probability' in item && item.probability && item.probability > 50).length / stage.items.length * 100)
     : 0;
   
   const toggleCollapsed = () => {
     setCollapsed(!collapsed);
+  };
+  
+  const handleAddClick = () => {
+    if (isSalesFunnel && onAddDeal) {
+      onAddDeal(stage.id);
+    } else if (!isSalesFunnel && onAddContact) {
+      onAddContact(stage.id);
+    }
   };
   
   return (
@@ -49,7 +61,7 @@ const FunnelStage: React.FC<FunnelStageProps> = ({ stage, onAddContact }) => {
           <h3 className="font-semibold text-gray-800">{stage.name}</h3>
           <div className="ml-2 flex items-center bg-white/70 px-2 py-0.5 rounded text-xs font-medium">
             <Users className="h-3 w-3 mr-1 text-gray-500" />
-            {stage.contacts.length}
+            {stage.items.length}
           </div>
         </div>
         
@@ -60,7 +72,7 @@ const FunnelStage: React.FC<FunnelStageProps> = ({ stage, onAddContact }) => {
             </div>
           )}
           
-          {conversionRate > 0 && (
+          {conversionRate > 0 && !isSalesFunnel && (
             <div className="text-xs font-medium bg-white/70 px-2 py-0.5 rounded">
               {conversionRate}% conv.
             </div>
@@ -79,7 +91,7 @@ const FunnelStage: React.FC<FunnelStageProps> = ({ stage, onAddContact }) => {
             variant="ghost" 
             size="icon" 
             className="h-7 w-7 hover:bg-white/50 text-gray-700"
-            onClick={() => onAddContact && onAddContact(stage.id)}
+            onClick={handleAddClick}
           >
             <PlusCircle size={16} />
           </Button>
@@ -89,17 +101,32 @@ const FunnelStage: React.FC<FunnelStageProps> = ({ stage, onAddContact }) => {
       <div 
         className={cn(
           "space-y-3 border-x border-b rounded-b-lg pb-3 transition-all",
-          collapsed ? "h-0 overflow-hidden border-0 pb-0" : ""
+          collapsed ? "h-0 overflow-hidden border-0 pb-0" : "pt-3 px-3"
         )}
+        style={{ borderColor: `${stage.color}40` }}
       >
-        {stage.contacts.length === 0 ? (
+        {stage.items.length === 0 ? (
           <div className="px-4 py-8 text-center text-gray-500 text-sm">
-            No hay contactos en esta etapa
+            {isSalesFunnel ? "No hay tratos en esta etapa" : "No hay contactos en esta etapa"}
           </div>
         ) : (
-          <div className="pt-3 px-3 space-y-3">
-            {stage.contacts.map(contact => (
-              <ContactCard key={contact.id} contact={contact} />
+          <div className="space-y-3">
+            {stage.items.map((item, index) => (
+              isSalesFunnel ? (
+                <DealCard 
+                  key={item.id} 
+                  deal={item as Deal} 
+                  index={index} 
+                  stageId={stage.id.toString()} 
+                  stageColor={stage.color}
+                />
+              ) : (
+                <ContactCard 
+                  key={item.id} 
+                  contact={item as Contact}
+                  onContactDeleted={onContactDeleted ? () => onContactDeleted(item.id) : undefined}
+                />
+              )
             ))}
           </div>
         )}

@@ -34,7 +34,7 @@ export default function LoginPage() {
               // Limpiar los parámetros guardados
               sessionStorage.removeItem('hubspot_callback_params')
               // Redirigir de vuelta al callback de HubSpot con los parámetros
-              navigate(`/auth/hubspot/callback?code=${params.code}&state=${params.state}`)
+              navigate(`/api/auth/hubspot/callback?code=${params.code}&state=${params.state}`)
             }
           } catch (error) {
             console.error('[Login] Error verifying token:', error)
@@ -73,7 +73,7 @@ export default function LoginPage() {
               await new Promise(resolve => setTimeout(resolve, 1500))
               console.log('[Login] Redirecting to HubSpot callback with token:', session.access_token.substring(0, 10) + '...')
               // Redirigir de vuelta al callback de HubSpot con los parámetros
-              navigate(`/auth/hubspot/callback?code=${params.code}&state=${params.state}`)
+              navigate(`/api/auth/hubspot/callback?code=${params.code}&state=${params.state}`)
               return { error: null }
             } catch (error) {
               console.error('[Login] Error processing saved params:', error)

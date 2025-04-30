@@ -1,4 +1,6 @@
 import { supabase } from '@/lib/supabase';
+import apiClient from '@/lib/axiosClient';
+import axios from 'axios';
 
 /**
  * Códigos de error para el servicio de transcripción
@@ -45,6 +47,7 @@ export interface TranscriptionResponse {
     key_points?: string[];
     segments?: TranscriptionSegment[];
     error?: string;
+    message?: string;
 }
 
 export interface TranscriptionError {
@@ -55,7 +58,6 @@ export interface TranscriptionError {
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // ms
-const API_URL = import.meta.env.VITE_MCP_API_URL || 'http://localhost:3001';
 
 /**
  * Solicita el inicio de una transcripción para una grabación existente
@@ -68,45 +70,21 @@ export async function requestTranscription(
     signedUrl: string
 ): Promise<TranscriptionResponse> {
     try {
-        // Obtener sesión actual para el token
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-        if (sessionError || !session) {
-            console.error('[whisperService] Error al obtener sesión o sesión no encontrada:', sessionError);
-            throw new Error('Usuario no autenticado');
-        }
-        const token = session.access_token;
-
         console.log(`[whisperService] Solicitando inicio de transcripción para ID: ${recordingId} usando URL firmada.`);
 
-        const response = await fetch(`${API_URL}/api/transcriptions/${recordingId}/process`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ signedUrl })
-        });
+        const response = await apiClient.post(`/api/transcriptions/${recordingId}/process`,
+            { signedUrl },
+            {}
+        );
 
-        if (!response.ok) {
-            let errorData;
-            try {
-                errorData = await response.json();
-            } catch (e) {
-                errorData = { message: `Error ${response.status}: ${response.statusText}` };
-            }
-            console.error(`[whisperService] Error ${response.status} al solicitar transcripción:`, errorData);
-            throw new Error(errorData.message || `Error ${response.status} al iniciar transcripción`);
-        }
-
-        const responseData = await response.json();
+        const responseData = response.data;
         console.log(`[whisperService] Respuesta recibida:`, responseData);
 
         return {
             id: responseData.id || recordingId,
             status: responseData.status || 'processing',
             progress: responseData.progress || 0,
-            message: responseData.message,
+            message: responseData.message || 'Procesamiento iniciado',
             completed: false,
             transcription: undefined,
             summary: undefined,
@@ -115,9 +93,15 @@ export async function requestTranscription(
             error: undefined,
         } as TranscriptionResponse;
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('[whisperService] Error en requestTranscription:', error);
-        throw error;
+        if (axios.isAxiosError(error) && error.response) {
+            console.error(`[whisperService] Error ${error.response.status} al solicitar transcripción:`, error.response.data);
+            const errorMsg = error.response.data?.message || error.response.data?.error || `Error ${error.response.status} al iniciar transcripción`;
+            throw new Error(errorMsg);
+        } else {
+            throw error;
+        }
     }
 }
 
@@ -128,20 +112,20 @@ export async function cancelTranscription(
     recordingId: string
 ): Promise<{ success: boolean }> {
     try {
-        const response = await fetch(`${API_URL}/api/transcriptions/${recordingId}/cancel`, {
-            method: 'POST',
-            credentials: 'include',
-        });
+        console.log(`[whisperService] Solicitando cancelación de transcripción para ID: ${recordingId}`);
+        const response = await apiClient.post(`/api/transcriptions/${recordingId}/cancel`);
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.message || 'Error al cancelar transcripción');
+        return response.data;
+
+    } catch (error: any) {
+        console.error('[whisperService] Error al cancelar transcripción:', error);
+        if (axios.isAxiosError(error) && error.response) {
+            console.error(`[whisperService] Error ${error.response.status} al cancelar:`, error.response.data);
+            const errorMsg = error.response.data?.message || error.response.data?.error || `Error ${error.response.status} al cancelar transcripción`;
+            throw new Error(errorMsg);
+        } else {
+            throw error;
         }
-
-        return await response.json();
-    } catch (error) {
-        console.error('Error al cancelar transcripción:', error);
-        throw error;
     }
 }
 

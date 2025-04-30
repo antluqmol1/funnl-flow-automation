@@ -11,7 +11,8 @@ from hubspot.crm.objects.models import SimplePublicObjectInput
 # from hubspot.crm.objects.models import CollectionResponseSimplePublicObject
 from hubspot.crm.objects.models import SimplePublicObject
 from hubspot.crm.objects.models import PublicObjectSearchRequest
-from hubspot.crm.objects.models import FilterGroup
+# Importar modelos para filtros
+from hubspot.crm.objects.models import Filter, FilterGroup
 
 # Importar desde módulo local si existe
 try:
@@ -185,18 +186,11 @@ async def crear_contacto_hubspot(firstname: str, email: str, lastname: str = "",
         
         # Verificar si el contacto ya existe
         # Buscar por email para evitar duplicados
+        # Usar los modelos del SDK para la búsqueda
+        email_filter = Filter(property_name="email", operator="EQ", value=email)
+        filter_group = FilterGroup(filters=[email_filter])
         search_request = PublicObjectSearchRequest(
-            filter_groups=[
-                {
-                    "filters": [
-                        {
-                            "property_name": "email",
-                            "operator": "EQ",
-                            "value": email
-                        }
-                    ]
-                }
-            ],
+            filter_groups=[filter_group],
             limit=1
         )
         
@@ -217,7 +211,7 @@ async def crear_contacto_hubspot(firstname: str, email: str, lastname: str = "",
         # Crear el contacto
         simple_public_object_input = SimplePublicObjectInput(properties=properties)
         api_response = hubspot_client.crm.contacts.basic_api.create(
-            simple_public_object_input=simple_public_object_input
+            simple_public_object_input_for_create=simple_public_object_input
         )
         
         return {

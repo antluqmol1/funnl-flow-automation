@@ -128,8 +128,8 @@ router.post('/:recordingId/process', (req: Request, res: Response, next: NextFun
 
             // Crear un cliente específico para este usuario/solicitud
             const supabaseUserClient = createClient(
-                process.env.VITE_SUPABASE_URL!,
-                process.env.VITE_SUPABASE_ANON_KEY!, // Usar ENV vars del backend
+                process.env.SUPABASE_URL!,
+                process.env.SUPABASE_ANON_KEY!, // Usar ENV vars del backend
                 { global: { headers: { Authorization: `Bearer ${token}` } } } // Pasa el token
             );
 
@@ -172,23 +172,18 @@ router.post('/:recordingId/process', (req: Request, res: Response, next: NextFun
 
             // --- 6. Generar Resumen y Puntos Clave (Usando MCP) ---
             let summary: string | null = null;
-            let keyPoints: string[] = []; // Inicializar como array vacío
+            let keyPoints: string[] = [];
+            let mcpClient: MCPClient | null = null;
             console.log(`[Routes][Transcriptions] Solicitando análisis AI vía MCP para ${recordingId}...`);
             try {
-                // Obtener instancia del cliente MCP
-                const mcpClient = await initMCP();
-
-                // Llamar a la herramienta directamente
+                mcpClient = await initMCP();
                 const aiAnalysisResult = await mcpClient.callMCPToolDirectly(
                     'analyze_meeting_transcription',
-                    { transcription_text: transcription } // Pasar argumento
+                    { transcription_text: transcription }
                 );
 
-                // Verificar si hubo error devuelto por la herramienta
                 if (aiAnalysisResult && aiAnalysisResult.error) {
                     console.error(`[Routes][Transcriptions] Error devuelto por herramienta MCP analyze_meeting_transcription para ${recordingId}:`, aiAnalysisResult.error);
-                    // Decidir si continuar sin análisis o marcar como error parcial?
-                    // Por ahora, continuamos sin análisis
                 } else if (aiAnalysisResult && aiAnalysisResult.summary && Array.isArray(aiAnalysisResult.key_points)) {
                     summary = aiAnalysisResult.summary;
                     keyPoints = aiAnalysisResult.key_points;
@@ -198,16 +193,57 @@ router.post('/:recordingId/process', (req: Request, res: Response, next: NextFun
                 }
             } catch (aiError) {
                 console.error(`[Routes][Transcriptions] Error al llamar a la herramienta MCP analyze_meeting_transcription para ${recordingId}:`, aiError);
-                // Continuar sin análisis en caso de error de comunicación con MCP
             }
+
+            // --- NUEVO: Generar Sugerencias de Acción ---
+            let suggestedActions: any[] | null = null; // Inicializar como null
+            console.log(`[Routes][Transcriptions] Solicitando sugerencias de acción vía MCP para ${recordingId}...`);
+            if (mcpClient) { // Reutilizar cliente si ya se inicializó
+                try {
+                    const suggestionsResult = await mcpClient.callMCPToolDirectly(
+                        'generate_meeting_suggestions_tool', // Usar el nombre de la herramienta registrada en Python
+                        {
+                            transcription_text: transcription,
+                            summary: summary, // Pasar el resumen obtenido
+                            key_points: keyPoints // Pasar los puntos clave obtenidos
+                        }
+                    );
+
+                    // --- LÓGICA CORREGIDA ---
+                    if (Array.isArray(suggestionsResult)) {
+                        // Caso esperado: MCP devolvió una lista
+                        suggestedActions = suggestionsResult;
+                        console.log(`[Routes][Transcriptions] ${suggestedActions.length} sugerencias (como lista) obtenidas vía MCP para ${recordingId}`);
+                    } else if (typeof suggestionsResult === 'object' && suggestionsResult !== null && suggestionsResult.id && suggestionsResult.mcp_tool) {
+                        // Caso workaround: MCP devolvió un solo objeto con estructura de acción válida
+                        console.warn(`[Routes][Transcriptions] generate_meeting_suggestions_tool devolvió un objeto, envolviéndolo en lista.`);
+                        suggestedActions = [suggestionsResult]; // Envolver el objeto en una lista
+                    }
+                    else {
+                        // Caso inesperado/vacío
+                        console.warn(`[Routes][Transcriptions] Respuesta inesperada o vacía de generate_meeting_suggestions_tool para ${recordingId}:`, suggestionsResult);
+                        suggestedActions = []; // Mantener como array vacío si no es ni lista ni objeto válido
+                    }
+                    // --- FIN LÓGICA CORREGIDA ---
+
+                } catch (suggestionsError) {
+                    console.error(`[Routes][Transcriptions] Error al llamar a la herramienta MCP generate_meeting_suggestions_tool para ${recordingId}:`, suggestionsError);
+                    suggestedActions = null; // Mantener como null en caso de error explícito
+                }
+            } else {
+                console.error(`[Routes][Transcriptions] No se pudo inicializar MCPClient, saltando generación de sugerencias para ${recordingId}.`);
+                suggestedActions = null; // Asegurar que sea null si MCP no se inicializó
+            }
+            // --- FIN NUEVO ---
 
             // --- 7. Actualizar Registro Final en DB (usando cliente de usuario) --- 
             console.log(`[Routes][Transcriptions] Actualizando registro final en DB para ${recordingId}...`);
             const finalUpdatePayload = {
                 status: 'completed' as const,
                 transcription,
-                summary: summary, // <-- Usar variable (puede ser null)
-                key_points: keyPoints, // <-- Usar variable (puede ser array vacío)
+                summary: summary,
+                key_points: keyPoints,
+                suggested_actions: Array.isArray(suggestedActions) ? suggestedActions : null,
                 updated_at: new Date().toISOString(),
             };
             const { data: updateData, error: finalUpdateError } = await supabaseUserClient // <-- USA CLIENTE DE USUARIO
@@ -231,8 +267,8 @@ router.post('/:recordingId/process', (req: Request, res: Response, next: NextFun
             // --- Actualizar a 'failed' (usando cliente de usuario si user existe) --- 
             if (user && recordingId && token) { // Añadir check de token por si acaso
                 const supabaseUserClientForFail = createClient(
-                    process.env.VITE_SUPABASE_URL!,
-                    process.env.VITE_SUPABASE_ANON_KEY!,
+                    process.env.SUPABASE_URL!,
+                    process.env.SUPABASE_ANON_KEY!,
                     { global: { headers: { Authorization: `Bearer ${token}` } } }
                 );
                 try {

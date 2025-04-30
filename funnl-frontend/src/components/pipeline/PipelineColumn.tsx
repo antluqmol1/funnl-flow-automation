@@ -37,19 +37,21 @@ interface Stage {
   position: number;
   color: string | null;
   description: string | null;
-  deals: Deal[] | Contact[];
+  items: (Deal | Contact)[];
 }
 
 interface PipelineColumnProps {
   stage: Stage;
   pipelineId: string;
   isContactPipeline?: boolean;
+  onContactDeleted: (contactId: string) => void;
 }
 
 const PipelineColumn: React.FC<PipelineColumnProps> = ({ 
   stage, 
   pipelineId,
-  isContactPipeline = false
+  isContactPipeline = false,
+  onContactDeleted
 }) => {
   return (
     <div className="flex-shrink-0 w-72">
@@ -63,7 +65,7 @@ const PipelineColumn: React.FC<PipelineColumnProps> = ({
         <div className="flex items-center gap-2">
           <h3 className="font-medium text-gray-800">{stage.name}</h3>
           <span className="text-xs px-2 py-0.5 bg-gray-100 text-gray-500 rounded-full">
-            {stage.deals.length}
+            {stage.items.length}
           </span>
         </div>
         <div className="flex items-center gap-1">
@@ -100,31 +102,29 @@ const PipelineColumn: React.FC<PipelineColumnProps> = ({
               snapshot.isDraggingOver ? 'bg-gray-50' : ''
             }`}
           >
-            {stage.deals.length > 0 ? (
+            {stage.items.length > 0 ? (
               <div className="space-y-3">
-                {isContactPipeline ? (
-                  // Renderizar ContactCard para el pipeline de contactos
-                  stage.deals.map((item, index) => (
+                {stage.items.map((item, index) => (
+                  isContactPipeline ? (
                     <ContactCard 
                       key={item.id} 
                       contact={item as Contact} 
                       index={index} 
                       stageId={stage.id}
                       stageColor={stage.color}
+                      onContactDeleted={onContactDeleted}
                     />
-                  ))
-                ) : (
-                  // Renderizar DealCard para el pipeline de ventas
-                  stage.deals.map((item, index) => (
+                  ) : (
                     <DealCard 
                       key={item.id} 
                       deal={item as Deal} 
                       index={index} 
                       stageId={stage.id}
                       stageColor={stage.color}
+                      isDraggable={true}
                     />
-                  ))
-                )}
+                  )
+                ))}
               </div>
             ) : (
               <div className="p-2 text-center text-sm text-gray-400 border border-dashed border-gray-200 rounded-lg">

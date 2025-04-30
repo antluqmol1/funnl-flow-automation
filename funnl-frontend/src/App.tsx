@@ -45,7 +45,7 @@ const App = () => (
               <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
               <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
               <Route path="/auth/hubspot-callback" element={<HubSpotCallback />} />
-              <Route path="/auth/hubspot/callback" element={<HubSpotCallback />} />
+              <Route path="/apiauth/hubspot/callback" element={<HubSpotCallback />} />
 
               {/* Rutas protegidas */}
               <Route path="/" element={<ProtectedRoute />}>

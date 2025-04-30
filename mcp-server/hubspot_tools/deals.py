@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 from hubspot import HubSpot
 from hubspot.crm.objects.exceptions import ApiException
 from hubspot.crm.objects.models import PublicObjectSearchRequest, SimplePublicObjectInput
+from typing import Optional
+from datetime import datetime
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -162,356 +164,290 @@ async def obtener_deal_hubspot(deal_id: str, user_id: str = None):
         logger.error(f"Error obteniendo deal de HubSpot: {e}")
         return {"error": f"Error: {str(e)}"}
 
-async def crear_deal_hubspot(deal_data, user_id: str = None):
+async def crear_deal_hubspot(
+    dealname: str,
+    dealstage: str,
+    amount: Optional[str] = None,
+    closedate: Optional[str] = None, # Espera formato YYYY-MM-DD
+    dealtype: Optional[str] = None,
+    description: Optional[str] = None,
+    user_id: Optional[str] = None
+):
     """
-    Crea un nuevo deal en HubSpot.
-    
+    Crea un nuevo deal en HubSpot en el pipeline de ventas por defecto.
+
     Args:
-        deal_data: Diccionario con datos del deal a crear
-        user_id: ID del usuario para obtener su token específico
-        
+        dealname: Nombre del deal (obligatorio).
+        dealstage: Nombre de la etapa del deal en español (Visitante, Captado, Cultivado, Demo, Negociación, Ganado, Perdido).
+        amount: Monto del deal.
+        closedate: Fecha de cierre (formato YYYY-MM-DD).
+        dealtype: Tipo de deal (e.g., 'newbusiness', 'existingbusiness').
+        description: Descripción del deal.
+        user_id: ID del usuario para obtener su token específico.
+
     Returns:
-        dict: Datos del deal creado o error
+        dict: Datos del deal creado o error.
     """
     try:
-        # Obtener token
         access_token = await get_hubspot_token(user_id)
         if not access_token:
             return {"error": "No se pudo obtener token de acceso a HubSpot"}
-        
-        # Inicializar cliente
+
         hubspot_client = HubSpot(access_token=access_token)
         
-        # Obtener etapa local para intentar mapearla a HubSpot
-        stage_id = deal_data.get("stage_id")
-        stage_name = None
-        stage_position = None
+        # Pipeline fijo por defecto
+        default_pipeline_id = "default"
         
-        if stage_id:
-            try:
-                from db import supabase
-                stage_response = supabase.table("pipeline_stages").select("name, position").eq("id", stage_id).maybe_single().execute()
-                if stage_response.data:
-                    stage_name = stage_response.data.get("name")
-                    stage_position = stage_response.data.get("position")
-                    logger.info(f"Etapa local encontrada: {stage_name} (posición {stage_position})")
-            except Exception as e:
-                logger.warning(f"Error obteniendo información de la etapa local: {e}")
-        
-        # Obtener opciones válidas de pipeline stages
-        hubspot_stage_id = None
-        stage_mapping = {
-            # Mapeo entre etapas locales y HubSpot
+        # Mapeo fijo Español -> Inglés (Label HubSpot)
+        stage_mapping_es_to_en = {
             "visitante": "Visitor Engaged",
-            "captado": "Lead Captured",
+            "captado": "Lead Captured", 
             "cultivado": "Lead Nurtured",
-            "demo": "Demo Delivered",
+            "demo": "Demo delivered",
             "negociación": "In Negotiation",
+            "negociacion": "In Negotiation",
             "ganado": "Deal Won",
             "perdido": "Deal Lost"
         }
-        
+
+        # --- Mapeo de Deal Stage Fijo ---
+        hubspot_stage_id = None
+        dealstage_lower = dealstage.lower().strip()
+        target_english_label = stage_mapping_es_to_en.get(dealstage_lower)
+
+        if not target_english_label:
+            error_msg = f"Nombre de etapa en español no válido: '{dealstage}'. Usar uno de: {', '.join(stage_mapping_es_to_en.keys())}"
+            logger.error(error_msg)
+            return {"error": error_msg, "stage_provided": dealstage}
+
         try:
-            # Obtenemos las etapas disponibles en HubSpot
             stages_response = hubspot_client.crm.pipelines.pipeline_stages_api.get_all(
-                pipeline_id="default",
+                pipeline_id=default_pipeline_id, # Usar pipeline por defecto
                 object_type="deals"
             )
             
-            # Registramos todas las etapas disponibles para referencia
-            all_hubspot_stages = []
-            if stages_response.results and len(stages_response.results) > 0:
-                # Por defecto, usamos la primera etapa
-                hubspot_stage_id = stages_response.results[0].id
-                logger.info(f"ID de etapa predeterminada obtenido: {hubspot_stage_id}")
-                
+            if stages_response.results:
+                found_stage = False
                 for stage in stages_response.results:
-                    all_hubspot_stages.append({
-                        "id": stage.id,
-                        "label": stage.label,
-                        "displayOrder": getattr(stage, "display_order", 0)
-                    })
-                    logger.info(f"Etapa disponible: {stage.label} (ID: {stage.id}, Orden: {getattr(stage, 'display_order', 0)})")
-                
-                # Intentar mapear por nombre si tenemos el nombre de la etapa local
-                if stage_name:
-                    # Normalizar a minúsculas sin espacios para comparación
-                    normalized_stage_name = stage_name.lower().replace(" ", "")
-                    
-                    # Buscar en el mapeo predefinido
-                    if normalized_stage_name in stage_mapping:
-                        hubspot_stage_key = stage_mapping[normalized_stage_name]
-                        # Buscar esta etapa en los resultados de HubSpot por label (no por ID)
-                        for stage in stages_response.results:
-                            if stage.label == hubspot_stage_key:
-                                hubspot_stage_id = stage.id
-                                logger.info(f"Etapa mapeada por nombre exacto: {stage.label} (ID: {hubspot_stage_id})")
-                                break
-                                
-                        # Si no encontramos coincidencia exacta, buscar por substring
-                        if not hubspot_stage_id or hubspot_stage_id == stages_response.results[0].id:
-                            for stage in stages_response.results:
-                                if hubspot_stage_key.lower() in stage.label.lower():
-                                    hubspot_stage_id = stage.id
-                                    logger.info(f"Etapa mapeada por nombre parcial: {stage.label} (ID: {hubspot_stage_id})")
-                                    break
-            
-            # Si no se encontró en el mapeo, buscar coincidencia directa o por posición
-            if not hubspot_stage_id or hubspot_stage_id == stages_response.results[0].id:
-                # Intentar buscar coincidencia directa por nombre
-                for stage in stages_response.results:
-                    if stage.label.lower().replace(" ", "") == normalized_stage_name:
+                    if stage.label == target_english_label:
                         hubspot_stage_id = stage.id
-                        logger.info(f"Etapa mapeada directamente: {stage.label} (ID: {hubspot_stage_id})")
+                        found_stage = True
                         break
-                
-                # Si aún no hay coincidencia y tenemos la posición, mapear por orden
-                if (not hubspot_stage_id or hubspot_stage_id == stages_response.results[0].id) and stage_position is not None:
-                    # Ordenar etapas de HubSpot por displayOrder
-                    ordered_stages = sorted(all_hubspot_stages, key=lambda x: x["displayOrder"])
-                    # Ajustar la posición a los límites del array
-                    adjusted_position = min(stage_position - 1, len(ordered_stages) - 1)
-                    if adjusted_position >= 0 and adjusted_position < len(ordered_stages):
-                        hubspot_stage_id = ordered_stages[adjusted_position]["id"]
-                        logger.info(f"Etapa mapeada por posición: {ordered_stages[adjusted_position]['label']} (ID: {hubspot_stage_id})")
-            
-            # Si es la etapa "Ganado", usar Deal Won
-            if stage_name and "ganado" in stage_name.lower():
-                for stage in stages_response.results:
-                    if stage.label == "Deal Won":
-                        hubspot_stage_id = stage.id
-                        logger.info(f"Etapa mapeada a Ganado/Deal Won: {stage.label} (ID: {hubspot_stage_id})")
-                        break
-            
-            # Si es la etapa "Perdido", usar Deal Lost
-            if stage_name and "perdido" in stage_name.lower():
-                for stage in stages_response.results:
-                    if stage.label == "Deal Lost":
-                        hubspot_stage_id = stage.id
-                        logger.info(f"Etapa mapeada a Perdido/Deal Lost: {stage.label} (ID: {hubspot_stage_id})")
-                        break
+                if found_stage:
+                     logger.info(f"Etapa mapeada para pipeline '{default_pipeline_id}': {dealstage} -> {target_english_label} -> ID: {hubspot_stage_id}")
+                else:
+                    # Esto no debería ocurrir si el mapeo es correcto y las etapas existen
+                    logger.warning(f"No se encontró la etapa con label '{target_english_label}' en el pipeline '{default_pipeline_id}'. Verifique la configuración de etapas en HubSpot.")
+                    # Devolvemos error porque el mapeo falló internamente
+                    error_msg = f"No se encontró la etapa HubSpot '{target_english_label}' mapeada desde '{dealstage}'."
+                    return {"error": error_msg, "pipeline_checked": default_pipeline_id, "stage_checked": dealstage, "target_label": target_english_label}
+            else:
+                 logger.warning(f"No se encontraron etapas para el pipeline por defecto '{default_pipeline_id}'.")
+                 # Devolvemos error porque no podemos asignar etapa
+                 error_msg = f"No se encontraron etapas en el pipeline por defecto '{default_pipeline_id}'."
+                 return {"error": error_msg, "pipeline_checked": default_pipeline_id}
+
+        except ApiException as e:
+            logger.error(f"Error de API obteniendo etapas del pipeline por defecto '{default_pipeline_id}': {e}")
+            return {"error": f"Error de API obteniendo etapas: {str(e)}", "pipeline_checked": default_pipeline_id}
         except Exception as e:
-            logger.warning(f"Error obteniendo etapas de pipeline: {e}")
-            # Si no podemos obtener las etapas, asignamos un valor predeterminado
-            hubspot_stage_id = None  # No asignar valor por defecto, se configurará al crear el deal en HubSpot
-            logger.info("No se pudo obtener lista de etapas de HubSpot. Se usará la etapa predeterminada de HubSpot.")
+            logger.error(f"Error inesperado obteniendo etapas del pipeline por defecto '{default_pipeline_id}': {e}", exc_info=True)
+            return {"error": f"Error inesperado obteniendo etapas: {str(e)}", "pipeline_checked": default_pipeline_id}
+        # --- Fin Mapeo Deal Stage Fijo ---
         
-        # Mapear propiedades del deal de Supabase a formato HubSpot
+        # --- Validación de Etapa Mapeada (Redundante con lógica anterior, pero por seguridad) ---
+        if not hubspot_stage_id:
+            error_msg = f"No se pudo mapear la etapa '{dealstage}' a un ID válido para el pipeline '{default_pipeline_id}'. Verifica los nombres."
+            logger.error(error_msg)
+            return {"error": error_msg, "pipeline_checked": default_pipeline_id, "stage_checked": dealstage}
+        # --- Fin Validación ---
+            
         properties = {
-            "dealname": deal_data.get("title", "Deal sin título"),
-            "description": deal_data.get("description", ""),
-            "amount": str(deal_data.get("value", 0)) if deal_data.get("value") is not None else "0",
-            "pipeline": "default",  # Pipeline predeterminado
+            "dealname": dealname,
+            "pipeline": default_pipeline_id # Usar pipeline por defecto
         }
-        
-        # Usar ID de stage válido que obtuvimos o el valor predeterminado
+
         if hubspot_stage_id:
             properties["dealstage"] = hubspot_stage_id
-            logger.info(f"Asignando etapa en HubSpot: {hubspot_stage_id}")
-        
-        # Formatear fecha de cierre esperada si existe
-        if deal_data.get("expected_close_date"):
+        else:
+            # Si no pudimos mapear, enviamos el nombre tal cual, puede que funcione o falle
+            properties["dealstage"] = dealstage 
+            logger.warning(f"No se pudo mapear la etapa '{dealstage}'. Se enviará el nombre directamente.")
+
+        if amount is not None:
+            properties["amount"] = str(amount) # Asegurar que sea string
+        if closedate:
             try:
-                # Formatear la fecha al formato requerido por HubSpot (YYYY-MM-DD)
-                from datetime import datetime
-                close_date = deal_data.get("expected_close_date")
-                # Si es un string, intentar convertirlo a fecha
-                if isinstance(close_date, str):
-                    close_date = datetime.strptime(close_date, "%Y-%m-%d").date()
-                properties["closedate"] = close_date.strftime("%Y-%m-%d")
-            except Exception as e:
-                logger.warning(f"Error formateando fecha de cierre: {e}")
-                # No incluir la fecha si hay error
-        
-        # Crear objeto de entrada para HubSpot
+                # Validar y formatear fecha YYYY-MM-DD
+                datetime.strptime(closedate, '%Y-%m-%d')
+                properties["closedate"] = closedate
+            except ValueError:
+                logger.warning(f"Formato de fecha de cierre inválido: {closedate}. Se omitirá.")
+        if dealtype:
+            properties["dealtype"] = dealtype
+        if description:
+            properties["description"] = description
+
         simple_public_object_input = SimplePublicObjectInput(properties=properties)
-        
-        # Crear deal en HubSpot
+
         api_response = hubspot_client.crm.deals.basic_api.create(
             simple_public_object_input_for_create=simple_public_object_input
         )
         
-        # Una vez creado el deal, podemos asociar contactos o empresas si es necesario
-        hubspot_deal_id = api_response.id
+        # Podríamos añadir lógica para asociaciones aquí si fuera necesario
         
-        # Asociar contacto si hay contact_id
-        if deal_data.get("contact_id"):
-            try:
-                # Obtener el hubspot_id del contacto desde la BD
-                from db import supabase
-                contact_response = supabase.table("contacts").select("hubspot_id").eq("id", deal_data["contact_id"]).maybe_single().execute()
-                
-                if contact_response.data and contact_response.data.get("hubspot_id"):
-                    hubspot_contact_id = contact_response.data["hubspot_id"]
-                    
-                    # Asociar contacto con deal
-                    hubspot_client.crm.deals.associations_api.create(
-                        deal_id=hubspot_deal_id,
-                        to_object_type="contacts",
-                        to_object_id=hubspot_contact_id,
-                        association_type="deal_to_contact"
-                    )
-                    logger.info(f"Contacto {hubspot_contact_id} asociado al deal {hubspot_deal_id} en HubSpot")
-            except Exception as e:
-                logger.warning(f"Error al asociar contacto al deal en HubSpot: {e}")
-        
-        # Si hay una empresa, buscarla en HubSpot o crearla
-        if deal_data.get("company"):
-            try:
-                # Si tenemos el ID de HubSpot de la empresa, usarlo directamente
-                hubspot_company_id = deal_data.get("hubspot_company_id")
-                company_name = deal_data.get("company")
-                
-                # Si no tenemos el ID de HubSpot, buscarlo por nombre
-                if not hubspot_company_id:
-                    logger.info(f"Buscando empresa '{company_name}' en HubSpot...")
-                    
-                    # Método 1: Búsqueda exacta por nombre
-                    search_response = hubspot_client.crm.companies.search_api.do_search(
-                        public_object_search_request=PublicObjectSearchRequest(
-                            filter_groups=[
-                                {
-                                    "filters": [
-                                        {
-                                            "propertyName": "name",
-                                            "operator": "EQ",
-                                            "value": company_name
-                                        }
-                                    ]
-                                }
-                            ],
-                            properties=["name", "domain"],
-                            limit=5
-                        )
-                    )
-                    
-                    # Si hay resultados, usar el primero
-                    if search_response.results and len(search_response.results) > 0:
-                        hubspot_company_id = search_response.results[0].id
-                        logger.info(f"Empresa encontrada en HubSpot (búsqueda exacta): {company_name} (ID: {hubspot_company_id})")
-                    else:
-                        # Método 2: Búsqueda parcial con CONTAINS_TOKEN
-                        try:
-                            search_response = hubspot_client.crm.companies.search_api.do_search(
-                                public_object_search_request=PublicObjectSearchRequest(
-                                    filter_groups=[
-                                        {
-                                            "filters": [
-                                                {
-                                                    "propertyName": "name",
-                                                    "operator": "CONTAINS_TOKEN",
-                                                    "value": company_name
-                                                }
-                                            ]
-                                        }
-                                    ],
-                                    properties=["name", "domain"],
-                                    limit=5
-                                )
-                            )
-                            
-                            # Si hay resultados, comparar nombres para encontrar la mejor coincidencia
-                            if search_response.results and len(search_response.results) > 0:
-                                # Normalizar el nombre para comparación
-                                normalized_name = company_name.lower().strip()
-                                
-                                for company in search_response.results:
-                                    result_name = company.properties.get("name", "").lower().strip()
-                                    # Si los nombres son muy similares, usar esta empresa
-                                    if normalized_name == result_name or (
-                                       normalized_name in result_name or result_name in normalized_name):
-                                        hubspot_company_id = company.id
-                                        logger.info(f"Empresa encontrada en HubSpot (búsqueda parcial): {company.properties.get('name')} (ID: {hubspot_company_id})")
-                                        break
-                        except Exception as search_error:
-                            logger.warning(f"Error en búsqueda parcial de empresa: {search_error}")
-                    
-                    # Si aún no se encontró, crear la empresa
-                    if not hubspot_company_id:
-                        logger.info(f"No se encontró la empresa '{company_name}' en HubSpot. Creando...")
-                        
-                        # Verificar si la empresa ya existe localmente y tiene un hubspot_id
-                        try:
-                            from db import supabase
-                            company_response = supabase.table("contacts").select("hubspot_id").eq("company", company_name).execute()
-                            
-                            if company_response.data and len(company_response.data) > 0:
-                                for contact in company_response.data:
-                                    if contact.get("hubspot_id"):
-                                        # Intentar obtener la empresa asociada a este contacto
-                                        try:
-                                            contact_hubspot_id = contact.get("hubspot_id")
-                                            associations_response = hubspot_client.crm.contacts.associations_api.get_all(
-                                                contact_id=contact_hubspot_id,
-                                                to_object_type="companies"
-                                            )
-                                            
-                                            if associations_response.results and len(associations_response.results) > 0:
-                                                hubspot_company_id = associations_response.results[0].id
-                                                logger.info(f"Empresa encontrada a través de contacto: ID {hubspot_company_id}")
-                                                break
-                                        except Exception as assoc_error:
-                                            logger.warning(f"Error buscando asociaciones de contacto: {assoc_error}")
-                        except Exception as db_error:
-                            logger.warning(f"Error buscando empresa en base de datos local: {db_error}")
-                        
-                        # Si todavía no se encontró, crear la empresa
-                        if not hubspot_company_id:
-                            try:
-                                create_company_response = hubspot_client.crm.companies.basic_api.create(
-                                    simple_public_object_input=SimplePublicObjectInput(
-                                        properties={
-                                            "name": company_name
-                                        }
-                                    )
-                                )
-                                hubspot_company_id = create_company_response.id
-                                logger.info(f"Empresa creada en HubSpot: {company_name} (ID: {hubspot_company_id})")
-                            except Exception as create_error:
-                                logger.error(f"Error creando empresa en HubSpot: {create_error}")
-                else:
-                    logger.info(f"Usando hubspot_company_id proporcionado: {hubspot_company_id}")
-                
-                # Asociar la empresa con el deal
-                if hubspot_company_id:
-                    try:
-                        hubspot_client.crm.deals.associations_api.create(
-                            deal_id=hubspot_deal_id,
-                            to_object_type="companies",
-                            to_object_id=hubspot_company_id,
-                            association_type="deal_to_company"
-                        )
-                        logger.info(f"Empresa {hubspot_company_id} asociada al deal {hubspot_deal_id} en HubSpot")
-                    except Exception as assoc_error:
-                        logger.error(f"Error al asociar empresa al deal: {assoc_error}")
-                else:
-                    logger.warning(f"No se pudo encontrar ni crear la empresa '{company_name}' en HubSpot")
-            except Exception as e:
-                logger.error(f"Error al procesar empresa para deal: {e}")
-        
-        # Actualizar el deal en Supabase con el ID de HubSpot
-        try:
-            from db import supabase
-            update_response = supabase.table("deals").update({
-                "hubspot_id": hubspot_deal_id,
-                "hubspot_type": "deal"
-            }).eq("id", deal_data["id"]).execute()
-            
-            logger.info(f"Deal {deal_data['id']} actualizado con hubspot_id {hubspot_deal_id}")
-        except Exception as e:
-            logger.error(f"Error actualizando deal con hubspot_id: {e}")
-            # Continuamos a pesar del error, ya que el deal se creó correctamente en HubSpot
-        
+        # Actualizar deal en Supabase si existe localmente (opcional)
+        # ...
+
         return {
             "success": True,
             "id": api_response.id,
             "properties": api_response.properties
         }
-    
+
     except ApiException as e:
         logger.error(f"Error de API HubSpot creando deal: {e}")
-        return {"error": f"Error de API HubSpot: {str(e)}"}
-    
+        return {"error": f"Error de API HubSpot: {str(e)}", "details": str(e.response.text if e.response else '')}
     except Exception as e:
-        logger.error(f"Error creando deal en HubSpot: {e}")
-        return {"error": f"Error: {str(e)}"} 
+        logger.error(f"Error creando deal en HubSpot: {e}", exc_info=True)
+        return {"error": f"Error inesperado: {str(e)}"}
+
+async def actualizar_deal_hubspot(
+    deal_id: str,
+    amount: Optional[str] = None,
+    closedate: Optional[str] = None, # Espera formato YYYY-MM-DD
+    deal_currency_code: Optional[str] = None,
+    dealname: Optional[str] = None,
+    dealstage: Optional[str] = None, # Nombre en español
+    dealtype: Optional[str] = None,
+    description: Optional[str] = None,
+    user_id: Optional[str] = None
+):
+    """
+    Actualiza un deal existente en HubSpot en el pipeline de ventas por defecto.
+
+    Args:
+        deal_id: ID del deal en HubSpot a actualizar (obligatorio).
+        amount: Nuevo monto del deal.
+        closedate: Nueva fecha de cierre (formato YYYY-MM-DD).
+        deal_currency_code: Nuevo código de moneda.
+        dealname: Nuevo nombre del deal.
+        dealstage: Nuevo nombre de la etapa del deal en español (Visitante, Captado, ...).
+        dealtype: Nuevo tipo de deal.
+        description: Nueva descripción.
+        user_id: ID del usuario para obtener su token específico.
+
+    Returns:
+        dict: Información del deal actualizado o error.
+    """
+    try:
+        access_token = await get_hubspot_token(user_id)
+        if not access_token:
+            return {"error": "No se pudo obtener token de acceso a HubSpot"}
+
+        hubspot_client = HubSpot(access_token=access_token)
+        
+        properties_to_update = {}
+        hubspot_stage_id = None
+        
+        # Pipeline fijo por defecto
+        default_pipeline_id = "default"
+        
+        # Mapeo fijo Español -> Inglés (Label HubSpot)
+        stage_mapping_es_to_en = {
+            "visitante": "Visitor Engaged",
+            "captado": "Lead Captured", 
+            "cultivado": "Lead Nurtured",
+            "demo": "Demo delivered",
+            "negociación": "In Negotiation",
+            "negociacion": "In Negotiation",
+            "ganado": "Deal Won",
+            "perdido": "Deal Lost"
+        }
+
+        # Mapear dealstage si se proporciona
+        if dealstage: 
+            dealstage_lower = dealstage.lower().strip()
+            target_english_label = stage_mapping_es_to_en.get(dealstage_lower)
+            
+            if not target_english_label:
+                error_msg = f"Nombre de etapa en español no válido al actualizar: '{dealstage}'. Usar uno de: {', '.join(stage_mapping_es_to_en.keys())}"
+                logger.error(error_msg)
+                return {"error": error_msg, "stage_provided": dealstage}
+
+            # --- Mapeo de Deal Stage Fijo (similar a create) ---
+            try:
+                stages_response = hubspot_client.crm.pipelines.pipeline_stages_api.get_all(
+                    pipeline_id=default_pipeline_id, 
+                    object_type="deals"
+                )
+                if stages_response.results:
+                    found_stage = False
+                    for stage in stages_response.results:
+                        if stage.label == target_english_label:
+                            hubspot_stage_id = stage.id
+                            found_stage = True
+                            break
+                    if found_stage:
+                         logger.info(f"Etapa mapeada para pipeline '{default_pipeline_id}': {dealstage} -> {target_english_label} -> ID: {hubspot_stage_id}")
+                         properties_to_update["dealstage"] = hubspot_stage_id
+                    else:
+                        logger.warning(f"No se encontró la etapa con label '{target_english_label}' en el pipeline '{default_pipeline_id}' al actualizar. La etapa no será actualizada.")
+                        # Podríamos devolver error o solo advertir. Advierto y no actualizo.
+                else:
+                     logger.warning(f"No se encontraron etapas para el pipeline por defecto '{default_pipeline_id}' al actualizar. La etapa no será actualizada.")
+            except Exception as e:
+                logger.warning(f"Error mapeando dealstage '{dealstage}' para pipeline '{default_pipeline_id}' al actualizar: {e}")
+            # --- Fin Mapeo Deal Stage Fijo ---
+             
+        # Añadir otras propiedades si se proporcionan
+        if amount is not None:
+            properties_to_update["amount"] = str(amount)
+        if closedate:
+            try:
+                datetime.strptime(closedate, '%Y-%m-%d')
+                properties_to_update["closedate"] = closedate
+            except ValueError:
+                logger.warning(f"Formato de fecha de cierre inválido: {closedate}. Se omitirá.")
+        if deal_currency_code:
+            properties_to_update["deal_currency_code"] = deal_currency_code
+        if dealname:
+            properties_to_update["dealname"] = dealname
+        if dealtype:
+            properties_to_update["dealtype"] = dealtype
+        if description:
+            properties_to_update["description"] = description
+
+        # --- Validación de Etapa para Actualización (Opcional, si queremos forzar que exista) ---
+        # if dealstage and not properties_to_update.get("dealstage"):
+        #     # Si se proporcionó dealstage pero no se pudo mapear a un ID
+        #    error_msg = f"No se pudo mapear la etapa '{dealstage}' a un ID válido para el pipeline por defecto. La etapa no será actualizada."
+        #    logger.error(error_msg)
+        #    return {"error": error_msg, "pipeline_checked": default_pipeline_id, "stage_checked": dealstage}
+        # --- Fin Validación Opcional ---
+            
+        if not properties_to_update:
+            return {"success": False, "message": "No se proporcionaron propiedades válidas para actualizar."}
+
+        simple_public_object_input = SimplePublicObjectInput(properties=properties_to_update)
+
+        api_response = hubspot_client.crm.deals.basic_api.update(
+            deal_id=deal_id,
+            simple_public_object_input=simple_public_object_input
+        )
+
+        return {
+            "success": True,
+            "id": api_response.id,
+            "properties": api_response.properties
+        }
+
+    except ApiException as e:
+        logger.error(f"Error de API HubSpot actualizando deal: {e}")
+        return {"error": f"Error de API HubSpot: {str(e)}", "details": str(e.response.text if e.response else '')}
+    except Exception as e:
+        logger.error(f"Error actualizando deal en HubSpot: {e}", exc_info=True)
+        return {"error": f"Error inesperado: {str(e)}"}
+
+
+# --- FIN NUEVAS FUNCIONES --- 

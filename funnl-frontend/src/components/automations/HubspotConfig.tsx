@@ -4,11 +4,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CheckCircle2, Loader2, XCircle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
-// No necesitamos supabase aquí si usamos API Key global
-// import { supabase } from '@/lib/supabase'; 
+import { supabase } from '@/lib/supabase';
 
-// URL de la API sigue apuntando al backend (mcp-server)
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Usar VITE_API_URL del .env, con fallback a 3001
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 interface HubspotConfigProps {
   onConfigured?: (isConfigured: boolean) => void;
@@ -22,15 +21,21 @@ export default function HubspotConfig({ onConfigured, compact = false, onRefresh
   const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Función para cargar el estado (simplificada)
+  // Función para cargar el estado (actualizada)
   const loadStatus = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      // Llamada directa a /status sin autenticación de usuario
-      const response = await fetch(`${API_URL}/hubspot/status`, {
+      // Obtener sesión de Supabase para el token
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session) {
+        throw new Error(sessionError?.message || 'Usuario no autenticado.');
+      }
+
+      // Llamada a /api/hubspot/status con token
+      const response = await fetch(`${API_URL}/api/hubspot/status`, {
         headers: {
-          // No se necesita encabezado Authorization
+          'Authorization': `Bearer ${session.access_token}`,
           'Accept': 'application/json'
         }
       });

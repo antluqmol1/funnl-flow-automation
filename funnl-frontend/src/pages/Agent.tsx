@@ -249,111 +249,113 @@ const Agent = () => {
   }, []);
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50 pb-14">
-      {/* Header - flex-col se encarga */}
-      <PageHeader 
-        title="Asistente IA" 
-        subtitle="Consulta tus datos y obtén ayuda inteligente"
-      />
+    <div className="h-screen bg-gray-50 flex flex-col">
+      <div className="flex flex-col flex-1 overflow-hidden pb-14">
+        {/* Header */}
+        <PageHeader
+          title="Asistente IA"
+          subtitle="Consulta tus datos y obtén ayuda inteligente"
+        />
 
-      {/* Panel de error - shrink-0 */}
-      {error && (
-        <div className="bg-destructive/10 text-destructive px-6 py-2 text-sm border-b border-destructive/20 shrink-0">
-          <div className="container mx-auto flex items-center">
-            <span className="mr-2">⚠️</span>
-            <span>{error}</span>
+        {/* Panel de error */}
+        {error && (
+          <div className="bg-destructive/10 text-destructive px-6 py-2 text-sm border-b border-destructive/20 shrink-0">
+            <div className="container mx-auto flex items-center">
+              <span className="mr-2">⚠️</span>
+              <span>{error}</span>
+            </div>
+          </div>
+        )}
+
+        {/* Área principal de chat - Ahora usa flex-1 dentro del nuevo wrapper */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {/* Contenedor interno para centrar y limitar ancho de mensajes */}
+          <div className="max-w-4xl mx-auto space-y-4">
+            {messages.map((message) => (
+              <MessageComponent
+                key={message.id}
+                message={message}
+              />
+            ))}
+            <div ref={messagesEndRef} />
           </div>
         </div>
-      )}
-      
-      {/* Área principal de chat - flex-1 para ocupar espacio, overflow-y-auto para scroll interno */}
-      <div className="flex-1 overflow-y-auto p-4"> 
-        {/* Contenedor interno para centrar y limitar ancho de mensajes */}
-        <div className="max-w-4xl mx-auto space-y-4">
-          {messages.map((message) => (
-            <MessageComponent
-              key={message.id}
-              message={message}
-            />
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-      </div>
-      
-      {/* Panel inferior de entrada - shrink-0, se posiciona después del chat */}
-      <div className="shrink-0 border-t border-border bg-background">
-        {/* Contenedor interno para centrar y limitar ancho de controles */}
-        <div className="max-w-4xl mx-auto p-4">
-          {/* Grabadora de audio cuando está en modo audio y grabando */}
-          {audioMode && isRecording ? (
-            <AudioRecorder
-              onRecordingComplete={handleRecordingComplete}
-              onRecordingCancel={handleRecordingCancel}
-              className="mb-4"
-            />
-          ) : (
-            <div className="flex items-end space-x-2">
-              {/* Botón para cambiar modo */}
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={toggleInputMode}
-                className="rounded-full"
-                title={audioMode ? "Cambiar a modo texto" : "Cambiar a modo audio"}
-              >
-                {audioMode ? <Type className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              </Button>
-              
-              {/* Input de texto o botón de audio según el modo */}
-              {audioMode ? (
+
+        {/* Panel inferior de entrada - Sigue siendo shrink-0 */}
+        <div className="shrink-0 border-t border-border bg-background">
+          {/* Contenedor interno para centrar y limitar ancho de controles */}
+          <div className="max-w-4xl mx-auto p-4">
+            {/* Grabadora de audio cuando está en modo audio y grabando */}
+            {audioMode && isRecording ? (
+              <AudioRecorder
+                onRecordingComplete={handleRecordingComplete}
+                onRecordingCancel={handleRecordingCancel}
+                className="mb-4"
+              />
+            ) : (
+              <div className="flex items-end space-x-2">
+                {/* Botón para cambiar modo */}
                 <Button
-                  variant="default"
-                  size="lg"
-                  onClick={startRecording}
-                  disabled={isRecording || isProcessing}
-                  className={cn(
-                    "rounded-full flex-1 gap-2",
-                    isProcessing && "opacity-70"
-                  )}
+                  variant="outline"
+                  size="icon"
+                  onClick={toggleInputMode}
+                  className="rounded-full"
+                  title={audioMode ? "Cambiar a modo texto" : "Cambiar a modo audio"}
                 >
-                  <Mic className="h-4 w-4" />
-                  {isProcessing ? "Procesando..." : "Presiona para hablar"}
+                  {audioMode ? <Type className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                 </Button>
-              ) : (
-                <div className="flex w-full">
-                  <Input
-                    type="text"
-                    value={input}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Escribe un mensaje..."
-                    className="flex-1 rounded-full rounded-r-none border-r-0"
-                    disabled={isProcessing}
-                  />
+
+                {/* Input de texto o botón de audio según el modo */}
+                {audioMode ? (
                   <Button
                     variant="default"
-                    size="icon"
-                    onClick={handleSendMessage}
-                    disabled={!input.trim() || isProcessing}
-                    className="rounded-full rounded-l-none h-10"
+                    size="lg"
+                    onClick={startRecording}
+                    disabled={isRecording || isProcessing}
+                    className={cn(
+                      "rounded-full flex-1 gap-2",
+                      isProcessing && "opacity-70"
+                    )}
                   >
-                    <Send className="h-4 w-4" />
+                    <Mic className="h-4 w-4" />
+                    {isProcessing ? "Procesando..." : "Presiona para hablar"}
                   </Button>
-                </div>
-              )}
-            </div>
-          )}
-          
-          {/* Indicador de transcripción de audio reciente */}
-          {transcription && !isRecording && (
-            <div className="mt-2 text-xs text-muted-foreground italic">
-              Transcripción: {transcription}
-            </div>
-          )}
+                ) : (
+                  <div className="flex w-full">
+                    <Input
+                      type="text"
+                      value={input}
+                      onChange={handleInputChange}
+                      onKeyDown={handleKeyDown}
+                      placeholder="Escribe un mensaje..."
+                      className="flex-1 rounded-full rounded-r-none border-r-0"
+                      disabled={isProcessing}
+                    />
+                    <Button
+                      variant="default"
+                      size="icon"
+                      onClick={handleSendMessage}
+                      disabled={!input.trim() || isProcessing}
+                      className="rounded-full rounded-l-none h-10"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Indicador de transcripción de audio reciente */}
+            {transcription && !isRecording && (
+              <div className="mt-2 text-xs text-muted-foreground italic">
+                Transcripción: {transcription}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-      
-      {/* Barra de navegación inferior - Fija al fondo por sus propios estilos */}
+
+      {/* Barra de navegación inferior - Ahora es hermano del wrapper, no hijo */}
       <BottomNavbar />
     </div>
   );

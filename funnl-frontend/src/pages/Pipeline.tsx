@@ -7,9 +7,9 @@ import PipelineColumn from '@/components/pipeline/PipelineColumn';
 import PipelineSelector from '@/components/pipeline/PipelineSelector';
 import CreateDealDialog from '@/components/pipeline/CreateDealDialog';
 import CreateContactDialog from '@/components/pipeline/CreateContactDialog';
-import { getPipelines, getPipelineWithStages, updateDeal } from '@/services/supabaseService';
+import { getPipelines, getPipelineWithStages, updateDeal, updateContact, deleteContact } from '@/services/supabaseService';
 import { DragDropContext, DropResult } from '@hello-pangea/dnd';
-import { useSyncAllWithHubspotMutation } from '@/hooks/useHubspotSync';
+import { useSyncAllContactsMutation, useSyncAllDealsMutation } from '@/hooks/useHubspotSync';
 import HubspotConfig from '@/components/automations/HubspotConfig';
 
 interface Pipeline {
@@ -32,7 +32,8 @@ const Pipeline = () => {
   const [createContactOpen, setCreateContactOpen] = useState(false);
   const [isHubspotConnected, setIsHubspotConnected] = useState(false);
   const { toast } = useToast();
-  const syncAllMutation = useSyncAllWithHubspotMutation();
+  const syncContactsMutation = useSyncAllContactsMutation();
+  const syncDealsMutation = useSyncAllDealsMutation();
   
   // Determina si el pipeline actual es de contactos o ventas
   const isContactPipeline = selectedPipeline?.name.toLowerCase().includes('contacto');
@@ -102,29 +103,28 @@ const Pipeline = () => {
     setSelectedPipeline(pipeline);
   };
 
-  // Filter deals based on search query
+  // Filter items based on search query
   const filteredPipelineData = pipelineData ? {
     ...pipelineData,
     stages: pipelineData.stages.map((stage: any) => {
-      const filteredDeals = stage.deals.filter((deal: any) => {
-        // Soporte para ambos tipos de pipelines (contactos y ventas)
+      const items = stage.items || []; // Default to empty array
+      
+      const filteredItems = items.filter((item: any) => {
         if (isContactPipeline) {
-          const nameMatch = deal.name?.toLowerCase().includes(searchQuery.toLowerCase());
-          const titleMatch = deal.title?.toLowerCase().includes(searchQuery.toLowerCase());
-          const companyMatch = deal.company?.toLowerCase().includes(searchQuery.toLowerCase());
-          const emailMatch = deal.email?.toLowerCase().includes(searchQuery.toLowerCase());
-          return nameMatch || titleMatch || companyMatch || emailMatch;
-        } else {
-          // Pipeline de ventas
-          const titleMatch = deal.title?.toLowerCase().includes(searchQuery.toLowerCase());
-          const companyMatch = deal.company?.toLowerCase().includes(searchQuery.toLowerCase());
+          const nameMatch = item.name?.toLowerCase().includes(searchQuery.toLowerCase());
+          const companyMatch = item.company?.toLowerCase().includes(searchQuery.toLowerCase());
+          const emailMatch = item.email?.toLowerCase().includes(searchQuery.toLowerCase());
+          return nameMatch || companyMatch || emailMatch;
+        } else { // Deal Pipeline
+          const titleMatch = item.title?.toLowerCase().includes(searchQuery.toLowerCase());
+          const companyMatch = item.company?.toLowerCase().includes(searchQuery.toLowerCase());
           return titleMatch || companyMatch;
         }
       });
       
       return {
         ...stage,
-        deals: filteredDeals
+        items: filteredItems // <-- Return filtered items under 'items' key
       };
     })
   } : null;
@@ -132,85 +132,67 @@ const Pipeline = () => {
   // Handle drag and drop functionality
   const handleDragEnd = async (result: DropResult) => {
     const { destination, source, draggableId } = result;
-    
-    // If dropped outside a droppable area
-    if (!destination) return;
-    
-    // If dropped in the same position
-    if (
-      destination.droppableId === source.droppableId &&
-      destination.index === source.index
-    ) {
-      return;
-    }
-    
-    // Get source and destination stages
+    if (!destination || !pipelineData) return;
+    if (destination.droppableId === source.droppableId && destination.index === source.index) return;
+
     const sourceStage = pipelineData.stages.find((stage: any) => stage.id === source.droppableId);
     const destinationStage = pipelineData.stages.find((stage: any) => stage.id === destination.droppableId);
-    
     if (!sourceStage || !destinationStage) return;
-    
-    // Create a new array of deals for the source stage
-    const sourceDealsCopy = Array.from(sourceStage.deals);
-    
-    // Get the deal that was moved
-    const [movedDeal] = sourceDealsCopy.splice(source.index, 1);
-    
+
+    const sourceItems = Array.from(sourceStage.items || []); // Use items
+    const [movedItem] = sourceItems.splice(source.index, 1);
+
+    // Optimistic UI update
     let newStages;
-    
-    // If moved within the same stage, just reorder
     if (source.droppableId === destination.droppableId) {
-      sourceDealsCopy.splice(destination.index, 0, movedDeal);
-      
-      newStages = pipelineData.stages.map((stage: any) => {
-        if (stage.id === source.droppableId) {
-          return {
-            ...stage,
-            deals: sourceDealsCopy,
-          };
-        }
-        return stage;
-      });
+      sourceItems.splice(destination.index, 0, movedItem);
+      newStages = pipelineData.stages.map((stage: any) => 
+        stage.id === source.droppableId ? { ...stage, items: sourceItems } : stage // Use items
+      );
     } else {
-      // If moved to a different stage
-      const destinationDealsCopy = Array.from(destinationStage.deals);
-      destinationDealsCopy.splice(destination.index, 0, movedDeal);
-      
+      const destinationItems = Array.from(destinationStage.items || []); // Use items
+      destinationItems.splice(destination.index, 0, movedItem);
       newStages = pipelineData.stages.map((stage: any) => {
-        if (stage.id === source.droppableId) {
-          return {
-            ...stage,
-            deals: sourceDealsCopy,
-          };
-        }
-        if (stage.id === destination.droppableId) {
-          return {
-            ...stage,
-            deals: destinationDealsCopy,
-          };
-        }
+        if (stage.id === source.droppableId) return { ...stage, items: sourceItems }; // Use items
+        if (stage.id === destination.droppableId) return { ...stage, items: destinationItems }; // Use items
         return stage;
       });
-      
-      // Update the deal in the database with the new stage_id
+    }
+    setPipelineData({ ...pipelineData, stages: newStages }); // Apply optimistic update
+
+    // Update database based on pipeline type
+    if (source.droppableId !== destination.droppableId) { 
       try {
-        await updateDeal(draggableId, { stage_id: destination.droppableId });
+        if (isContactPipeline) {
+          let newStatus = 'otro';
+          const destStageName = destinationStage.name.toLowerCase();
+          if (destStageName.includes('suscriptor')) newStatus = 'suscriptor';
+          else if (destStageName.includes('lead')) newStatus = 'lead';
+          else if (destStageName.includes('mql')) newStatus = 'mql';
+          else if (destStageName.includes('sql')) newStatus = 'sql';
+          else if (destStageName.includes('oportunidad')) newStatus = 'oportunidad';
+          else if (destStageName.includes('cliente')) newStatus = 'cliente';
+          else if (destStageName.includes('evangelista')) newStatus = 'evangelista';
+          
+          await updateContact(draggableId, { 
+            stage_id: destination.droppableId, 
+            status: newStatus 
+          });
+          toast({ title: "Contacto movido", description: `Movido a la etapa ${destinationStage.name}.` });
+        } else {
+          await updateDeal(draggableId, { stage_id: destination.droppableId });
+          toast({ title: "Trato movido", description: `Movido a la etapa ${destinationStage.name}.` });
+        }
       } catch (error) {
-        console.error('Failed to update deal stage:', error);
+        console.error(`Failed to update ${isContactPipeline ? 'contact' : 'deal'} stage:`, error);
         toast({
           title: "Error",
-          description: "Error al actualizar la etapa del trato. Por favor, inténtelo de nuevo.",
+          description: `Error al actualizar la etapa del ${isContactPipeline ? 'contacto' : 'trato'}. Revirtiendo cambio visual.`,
           variant: "destructive",
         });
-        return;
+        setPipelineData(pipelineData);
       }
     }
-    
-    // Update the state with the new arrangement
-    setPipelineData({
-      ...pipelineData,
-      stages: newStages,
-    });
   };
 
   // Función para manejar el botón "Nuevo Trato" o "Nuevo Contacto"
@@ -229,30 +211,64 @@ const Pipeline = () => {
 
   // Función para manejar el refresh de datos de HubSpot
   const handleHubspotRefresh = () => {
+    const mutationToUse = isContactPipeline ? syncContactsMutation : syncDealsMutation;
+    const type = isContactPipeline ? 'contactos' : 'tratos';
+
     toast({
       title: "Sincronizando",
-      description: "Actualizando datos de HubSpot...",
+      description: `Actualizando ${type} con HubSpot...`,
       duration: 3000,
     });
-    syncAllMutation.mutate();
+
+    // Llamar a la mutación correspondiente
+    mutationToUse.mutate(undefined, {
+      onSuccess: (data) => {
+        const successMessage = data.message || `Sincronización de ${type} completada.`;
+        let details = "";
+        if (isContactPipeline && data.details) {
+            const d = data.details as any; // Cast para acceder a detalles
+            details = `${d.linked_contacts ?? 0} vinculados, ${d.imported_contacts ?? 0} importados.`;
+        } else if (!isContactPipeline && data.details) {
+            const d = data.details as any; // Cast para acceder a detalles
+            details = `${d.linked_deals ?? 0} vinculados, ${d.imported_deals ?? 0} importados.`;
+        }
+        const errorsCount = data.details?.errors?.length ?? 0;
+        if (errorsCount > 0) details += ` ${errorsCount} errores.`;
+
+        toast({
+          title: `Sincronización Completa (${type})`,
+          description: `${successMessage} ${details}`.trim(),
+        });
+        loadPipelineData(); // Recargar los datos después de la sincronización
+      },
+      onError: (error) => {
+        toast({
+          variant: "destructive",
+          title: `Error de Sincronización (${type})`,
+          description: error.message || `No se pudo completar la sincronización de ${type}.`,
+        });
+      }
+    });
   };
 
-  useEffect(() => {
-    if (syncAllMutation.isSuccess) {
+  // --- Added: Handler for deleting contact --- 
+  const handleDeleteContact = async (contactId: string) => {
+    try {
+      await deleteContact(contactId); // Call service
       toast({
-        title: "Sincronización Completa",
-        description: "Los datos de HubSpot han sido sincronizados con éxito.",
+        title: "Contacto eliminado",
+        description: "El contacto ha sido eliminado del pipeline.",
       });
-      loadPipelineData(); // Recargar los datos después de la sincronización
-    }
-    if (syncAllMutation.isError) {
+      await loadPipelineData(); // Reload data
+    } catch (error) {
+      console.error('Error deleting contact from pipeline:', error);
       toast({
+        title: "Error al eliminar",
+        description: "No se pudo eliminar el contacto. Inténtalo de nuevo.",
         variant: "destructive",
-        title: "Error de Sincronización",
-        description: syncAllMutation.error?.message || "No se pudo completar la sincronización con HubSpot.",
       });
     }
-  }, [syncAllMutation.isSuccess, syncAllMutation.isError, syncAllMutation.error, toast]);
+  };
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -274,13 +290,13 @@ const Pipeline = () => {
           
           <div className="flex gap-2">
             {isHubspotConnected && (
-              <button 
+              <button
                 className="flex items-center gap-1 text-gray-600 bg-white border border-gray-200 px-3 py-1.5 rounded-lg text-sm"
                 onClick={handleHubspotRefresh}
-                disabled={syncAllMutation.isPending}
+                disabled={syncContactsMutation.isPending || syncDealsMutation.isPending}
               >
-                <RefreshCw size={16} className={syncAllMutation.isPending ? "animate-spin" : ""} />
-                {syncAllMutation.isPending ? "Sincronizando..." : "Sincronizar con HubSpot"}
+                <RefreshCw size={16} className={(syncContactsMutation.isPending || syncDealsMutation.isPending) ? "animate-spin" : ""} />
+                {(syncContactsMutation.isPending || syncDealsMutation.isPending) ? "Sincronizando..." : `Sinc. ${isContactPipeline ? 'Contactos' : 'Tratos'}`}
               </button>
             )}
             <button 
@@ -354,6 +370,7 @@ const Pipeline = () => {
                   stage={stage} 
                   pipelineId={selectedPipeline?.id || ''} 
                   isContactPipeline={isContactPipeline}
+                  onContactDeleted={handleDeleteContact}
                 />
               ))}
               

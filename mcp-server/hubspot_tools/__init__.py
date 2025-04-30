@@ -12,6 +12,8 @@ __all__ = [
     'actualizar_empresa_hubspot',
     'buscar_deal_hubspot',
     'obtener_deal_hubspot',
+    'crear_deal_hubspot',
+    'actualizar_deal_hubspot',
     'buscar_ticket_hubspot',
     'obtener_ticket_hubspot',
     'hubspot_sync',
@@ -32,7 +34,7 @@ from .companies import (
     crear_empresa_hubspot,
     actualizar_empresa_hubspot
 )
-from .deals import buscar_deal_hubspot, obtener_deal_hubspot
+from .deals import buscar_deal_hubspot, obtener_deal_hubspot, crear_deal_hubspot, actualizar_deal_hubspot
 from .tickets import buscar_ticket_hubspot, obtener_ticket_hubspot
 from .sync import hubspot_sync, hubspot_cache, HubspotSync, HubspotCache
 from .utils import (

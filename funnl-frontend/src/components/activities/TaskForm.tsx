@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -25,6 +25,12 @@ import { type Task } from '@/services/supabaseService';
 import { useCreateTaskMutation, useUpdateTaskMutation } from '@/hooks/useTasks';
 import { useToast } from '@/components/ui/use-toast';
 import HubspotObjectSelector from "./HubspotObjectSelector";
+import { Link } from 'react-router-dom';
+import { Plus } from 'lucide-react';
+import apiClient from '@/lib/axiosClient';
+import { useAuthContext } from '@/contexts/AuthContext';
+import { HubspotObject } from '@/types/hubspot';
+import { Task as SupabaseTaskType } from '@/services/supabaseService';
 
 interface TaskFormProps {
   task?: Task;
@@ -47,9 +53,37 @@ type TaskFormValues = z.infer<typeof taskSchema>;
 
 const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
   const { toast } = useToast();
-  
+  const { user } = useAuthContext();
   const createTaskMutation = useCreateTaskMutation();
   const updateTaskMutation = useUpdateTaskMutation();
+
+  // Estado para saber si HubSpot está conectado
+  const [isHubspotConnected, setIsHubspotConnected] = useState<boolean | null>(null);
+  const [checkingConnection, setCheckingConnection] = useState(true);
+
+  // Verificar conexión con HubSpot al montar el componente
+  useEffect(() => {
+    const checkConnection = async () => {
+      if (!user) {
+        setIsHubspotConnected(false);
+        setCheckingConnection(false);
+        return;
+      }
+      setCheckingConnection(true);
+      try {
+        const response = await apiClient.get<{ success: boolean; connected: boolean; message?: string }>('/api/hubspot/status'); 
+        
+        console.log('Full response.data from /api/hubspot/status:', response.data);
+
+        setIsHubspotConnected(response.data.connected); 
+      } catch (error) {
+        console.error("Error checking HubSpot connection:", error);
+        setIsHubspotConnected(false);
+      }
+      setCheckingConnection(false);
+    };
+    checkConnection();
+  }, [user]);
 
   const form = useForm<TaskFormValues>({
     resolver: zodResolver(taskSchema),
@@ -66,68 +100,180 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       title: '',
       type: 'call',
       time: new Date().toISOString().substring(0, 16), // Formato YYYY-MM-DDThh:mm
-      contact_id: null,
+      contact_id: undefined,
       status: 'pending',
       priority: 'medium',
-      hubspot_id: null,
-      hubspot_type: 'contact' // Valor predeterminado 'contact'
+      hubspot_id: undefined,
+      hubspot_type: 'contact' // Mantener o cambiar a undefined si se prefiere
     },
   });
 
-  const onSubmit = async (values: TaskFormValues) => {
-    try {
-      // Si se seleccionó un contacto, actualizamos el contact_id
-      if (values.hubspot_type === 'contact' && values.hubspot_id) {
-        values.contact_id = values.hubspot_id;
+  // --- NUEVO: Observar valores del formulario para pasarlos al selector --- 
+  const watchedHubspotId = form.watch('hubspot_id');
+  const watchedHubspotType = form.watch('hubspot_type');
+
+  // Reconstruir el objeto para pasar como prop (puede no tener el nombre)
+  const currentSelectedObject: HubspotObject | null = useMemo(() => {
+      if (watchedHubspotId && watchedHubspotType) {
+          // Idealmente, aquí tendríamos el nombre guardado en algún sitio.
+          // Como no lo tenemos, HubspotObjectSelector mostrará un texto genérico
+          // o podríamos intentar construirlo si tuviéramos más datos.
+          // Por ahora, pasamos lo que tenemos.
+          return {
+              id: watchedHubspotId,
+              type: watchedHubspotType,
+              name: 'Objeto seleccionado' // Placeholder si el nombre no está disponible
+          };
       }
-      
+      return null;
+  }, [watchedHubspotId, watchedHubspotType]);
+  // --- FIN NUEVO ---
+
+  const onSubmit = async (values: TaskFormValues) => {
+    let savedTask: SupabaseTaskType | null = null;
+    try {
+      // Copiar los valores del formulario
+      const submissionData = { ...values };
+
+      // Si se seleccionó un objeto de HubSpot, asegurar que contact_id (UUID) sea null
+      if (submissionData.hubspot_id) {
+        submissionData.contact_id = null; 
+      } else {
+        submissionData.contact_id = submissionData.contact_id || null;
+      }
+
+      console.log("[TaskForm] Datos a enviar a Supabase:", submissionData);
+
       if (task) {
         // Actualizar tarea existente
-        await updateTaskMutation.mutateAsync({
+        // La mutación de actualización podría no devolver la tarea actualizada directamente
+        // Necesitamos la data actualizada para el sync
+        const updatePayload = {
           id: task.id,
-          updates: values
-        });
+          updates: submissionData
+        };
+        // Actualizar y asumir que los datos en `submissionData` son los correctos para el sync
+        // Si la mutación devolviera el objeto actualizado, sería mejor usar ese
+        await updateTaskMutation.mutateAsync(updatePayload);
+        savedTask = { 
+            ...task, // Empezar con los datos antiguos
+            ...submissionData, // Sobrescribir con los nuevos
+            // Asegurarse que los campos obligatorios de Task estén (aunque sean null)
+            created_at: task.created_at, 
+            updated_at: new Date().toISOString(), // Actualizar timestamp
+            id: task.id, // Mantener el id original
+            hubspot_task_id: task.hubspot_task_id // Mantener el hubspot_task_id existente
+        };
         toast({
           title: "Tarea actualizada",
           description: "La tarea ha sido actualizada correctamente.",
         });
       } else {
-        // Crear nueva tarea
-        await createTaskMutation.mutateAsync(values as Omit<Task, 'id' | 'created_at' | 'updated_at'>);
+        // Crear nueva tarea - Capturamos la respuesta que contiene la nueva tarea
+        savedTask = await createTaskMutation.mutateAsync(submissionData as Omit<Task, 'id' | 'created_at' | 'updated_at' | 'hubspot_task_id'>);
         toast({
           title: "Tarea creada",
           description: "La tarea ha sido creada correctamente.",
         });
-        form.reset(); // Limpiar formulario después de crear
+        // No hacer form.reset() aquí, hacerlo después del sync o al cerrar
       }
       
-      if (onComplete) {
-        onComplete();
+      // --- INICIO: Llamada para sincronizar con HubSpot --- 
+      if (savedTask && savedTask.hubspot_id && savedTask.hubspot_type && isHubspotConnected === true) {
+        console.log(`[TaskForm] Intentando sincronizar Tarea ${savedTask.id} con HubSpot...`);
+        try {
+          const syncPayload = {
+            supabaseTaskId: savedTask.id,
+            hubspotObjectId: savedTask.hubspot_id, 
+            hubspotObjectType: savedTask.hubspot_type,
+            existingHubspotTaskId: savedTask.hubspot_task_id, // Enviar el ID si existe
+            taskData: {
+              title: savedTask.title,
+              status: savedTask.status,
+              priority: savedTask.priority,
+              time: savedTask.time,
+            }
+          };
+          
+          console.log("[TaskForm] Payload para /tasks/sync:", syncPayload);
+
+          const syncResponse = await apiClient.post('/api/hubspot/tasks/sync', syncPayload);
+          
+          console.log("[TaskForm] Respuesta de sincronización HubSpot:", syncResponse.data);
+
+          // Podríamos mostrar un toast secundario de éxito para el sync si quisiéramos
+          // toast({ title: "Sincronización HubSpot", description: "Tarea sincronizada." });
+
+        } catch (syncError: any) {
+          console.error("[TaskForm] Error durante la sincronización con HubSpot:", syncError);
+          // Mostrar un toast de advertencia, ya que la tarea principal se guardó
+          toast({
+            title: "Advertencia de Sincronización",
+            description: `La tarea se guardó localmente, pero falló la sincronización con HubSpot: ${syncError.response?.data?.message || syncError.message}`,
+            variant: "destructive", // Usar destructivo para que sea visible, aunque sea advertencia
+            duration: 7000, // Duración más larga
+          });
+        }
+      } else if (savedTask && savedTask.hubspot_id && isHubspotConnected !== true) {
+         console.warn(`[TaskForm] Tarea ${savedTask.id} guardada, pero no se sincroniza porque HubSpot no está conectado.`);
+         // Podríamos mostrar un toast informativo
+         toast({ title: "Información", description: "Tarea guardada localmente. Conecta HubSpot para sincronizar." });
       }
-    } catch (error) {
-      console.error('Error saving task:', error);
+      // --- FIN: Llamada para sincronizar con HubSpot --- 
+
+      // Limpiar y cerrar solo después de que todo (incluido el intento de sync) haya terminado
+      if (!task) { // Solo resetear si era una creación
+         form.reset();
+      }
+      if (onComplete) {
+        onComplete(); // Llamar a onComplete para cerrar el modal/drawer
+      }
+
+    } catch (error: any) { // Capturar error de guardado en Supabase
+      console.error('Error saving task to Supabase:', error);
+      
+      // Intentar obtener más detalles del error si es posible
+      let errorMessage = "Hubo un problema al guardar la tarea.";
+      if (error.message) {
+          errorMessage = error.message;
+      }
+      // Si el error viene de Supabase, puede tener más detalles
+      if (error.details) {
+          errorMessage += ` Detalles: ${error.details}`;
+      }
+      if (error.hint) {
+           errorMessage += ` Pista: ${error.hint}`;
+      }
+
       toast({
-        title: "Error",
-        description: "Hubo un problema al guardar la tarea.",
+        title: "Error al guardar tarea",
+        description: errorMessage,
         variant: "destructive",
       });
     }
   };
 
   // Manejador para cuando se selecciona un objeto de HubSpot
-  const handleHubspotObjectSelect = (object: any) => {
+  const handleHubspotObjectSelect = (object: HubspotObject | null) => {
+    // Log añadido
+    console.log('[TaskForm] handleHubspotObjectSelect received:', object);
+    
     if (object) {
+      console.log(`[TaskForm] Setting form values: hubspot_type=${object.type}, hubspot_id=${object.id}`);
       form.setValue('hubspot_type', object.type);
       form.setValue('hubspot_id', object.id);
+      // Actualizar nombre también si lo recibimos (aunque no lo usemos para mostrar)
+      // form.setValue('title', object.name); // Opcional: ¿actualizar título?
       
-      // Si el objeto es un contacto, actualizamos también el contact_id
       if (object.type === 'contact') {
+        console.log(`[TaskForm] Setting contact_id to ${object.id}`);
         form.setValue('contact_id', object.id);
       }
     } else {
-      form.setValue('hubspot_type', null);
-      form.setValue('hubspot_id', null);
-      form.setValue('contact_id', null);
+      console.log('[TaskForm] Clearing HubSpot fields');
+      form.setValue('hubspot_type', undefined);
+      form.setValue('hubspot_id', undefined);
+      form.setValue('contact_id', undefined);
     }
   };
 
@@ -246,57 +392,41 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
           />
         </div>
         
-        {/* Sección de vinculación con HubSpot (siempre visible) */}
-        <div className="space-y-4 border p-4 rounded-md">
-          <h3 className="text-sm font-medium">Contacto de HubSpot</h3>
+        {/* Sección de vinculación con HubSpot actualizada */}
+        <div className="space-y-2 border p-4 rounded-md min-h-[100px]">
+          <h3 className="text-sm font-medium text-gray-700">Contacto de HubSpot</h3>
+          {checkingConnection ? (
+            <p className="text-xs text-gray-500 italic">Verificando conexión...</p>
+          ) : isHubspotConnected === true ? (
+            <HubspotObjectSelector 
+              objectType="contact"
+              onSelect={handleHubspotObjectSelect} 
+              selectedObject={currentSelectedObject}
+            />
+          ) : isHubspotConnected === false ? (
+            <div className="flex flex-col items-start space-y-2">
+               <Link to="/automations" className="w-full">
+                 <Button variant="outline" className="w-full border-dashed border-orange-500 text-orange-600 hover:bg-orange-50">
+                   <Plus className="h-4 w-4 mr-2"/>
+                   Conectar con HubSpot primero
+                 </Button>
+               </Link>
+               <p className="text-xs text-gray-500">
+                 Para vincular tareas con objetos de HubSpot, primero debes conectar tu cuenta.
+               </p>
+             </div>
+          ) : null}
           
-          <FormField
-            control={form.control}
-            name="hubspot_type"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Contacto</FormLabel>
-                <FormControl>
-                  <HubspotObjectSelector
-                    objectType="contact"
-                    onSelect={handleHubspotObjectSelect}
-                    selectedObject={
-                      form.getValues('hubspot_id')
-                        ? {
-                            id: form.getValues('hubspot_id') || '',
-                            name: form.getValues('hubspot_id')?.includes('hubspot-') 
-                              ? `Contacto de HubSpot (${form.getValues('hubspot_id')?.substring(8, 16)}...)`
-                              : 'Contacto seleccionado',
-                            type: 'contact',
-                          }
-                        : null
-                    }
-                  />
-                </FormControl>
-                <FormDescription>
-                  Selecciona un contacto de HubSpot para vincular con esta tarea
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
+          <FormField control={form.control} name="hubspot_id" render={({ field }) => <input type="hidden" {...field} value={field.value ?? ''} />} />
+          <FormField control={form.control} name="hubspot_type" render={({ field }) => <input type="hidden" {...field} value={field.value ?? ''} />} />
         </div>
 
-        <div className="flex justify-end space-x-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => onComplete && onComplete()}
-          >
+        <div className="flex justify-end space-x-2 pt-4">
+          <Button type="button" variant="ghost" onClick={onComplete}>
             Cancelar
           </Button>
-          <Button 
-            type="submit"
-            disabled={createTaskMutation.isPending || updateTaskMutation.isPending}
-          >
-            {createTaskMutation.isPending || updateTaskMutation.isPending
-              ? 'Guardando...'
-              : task ? 'Actualizar' : 'Crear'}
+          <Button type="submit" disabled={checkingConnection || createTaskMutation.isPending || updateTaskMutation.isPending}>
+            {task ? 'Actualizar Tarea' : 'Crear Tarea'}
           </Button>
         </div>
       </form>

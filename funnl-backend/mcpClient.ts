@@ -86,10 +86,13 @@ export class MCPClient {
             content: query,
         });
 
+        const systemPrompt = "Por favor, formatea siempre tus respuestas usando Markdown, de forma que cree un UI amigable y atractivo para el usuario.";
+
         const response = await this.llm.messages.create({
             model: "claude-3-5-sonnet-20241022",
             max_tokens: 1000,
             messages: this.messageHistory,
+            system: systemPrompt,
             tools: this.tools,
         });
 
@@ -110,31 +113,92 @@ export class MCPClient {
                 const toolName = content.name;
                 const toolArgs = content.input as { [x: string]: unknown } | undefined;
 
+                // Añadir la llamada original de la IA al historial
+                this.messageHistory.push({ role: "assistant", content: [content] });
+
+                console.log(`[MCPClient] Calling tool: ${toolName} with args:`, toolArgs);
                 const result = await this.mcp.callTool({
                     name: toolName,
                     arguments: toolArgs,
                 });
-                toolResults.push(result);
-                const toolMessage = `[Calling tool ${toolName} with args ${JSON.stringify(toolArgs)}]`;
+                console.log(`[MCPClient] Result from ${toolName}:`, result);
+
+                // Extraer y parsear el contenido JSON de la respuesta de la herramienta
+                let parsedResultContent: any = null; // Inicializar a null
+                let rawToolResultText: string = ""; // Inicializar como string vacío
+                let errorMessage: string | null = null;
+
+                if (result && Array.isArray(result.content) && result.content.length > 0) {
+                    const firstContent = result.content[0];
+                    if (firstContent && firstContent.type === 'text' && typeof firstContent.text === 'string') {
+                        rawToolResultText = firstContent.text; // Guardar el texto original
+                        try {
+                            parsedResultContent = JSON.parse(rawToolResultText);
+                            // Verificar si el *contenido* del JSON indica un error
+                            if (parsedResultContent && typeof parsedResultContent === 'object' && parsedResultContent.error) {
+                                errorMessage = `Tool reported error: ${JSON.stringify(parsedResultContent.error)}`;
+                                console.warn(`[MCPClient] ${errorMessage}`);
+                            }
+                        } catch (e) {
+                            console.error(`[MCPClient] Failed to parse JSON from tool ${toolName}:`, e);
+                            errorMessage = `Error parsing tool result: ${rawToolResultText}`;
+                            // Mantener rawToolResultText para enviarlo, pero marcar error
+                        }
+                    } else {
+                        errorMessage = `Unexpected content structure from tool ${toolName}`;
+                        console.warn(`[MCPClient] ${errorMessage}:`, firstContent);
+                        // No hay texto raw para enviar, enviar mensaje de error
+                        rawToolResultText = JSON.stringify({ error: errorMessage });
+                    }
+                } else {
+                    errorMessage = `No valid content received from tool ${toolName}`;
+                    console.warn(`[MCPClient] ${errorMessage}. Full result:`, result);
+                    // No hay texto raw para enviar, enviar mensaje de error
+                    rawToolResultText = JSON.stringify({ error: errorMessage });
+                }
+
+                // Construir el mensaje de resultado de herramienta para el historial
+                const toolResultMessage: MessageParam = {
+                    role: "user",
+                    content: [
+                        {
+                            type: "tool_result",
+                            tool_use_id: content.id,
+                            content: rawToolResultText, // Usar directamente, ya es string
+                            // Establecer is_error si hubo error de parseo O si el JSON parseado contenía una clave "error"
+                            is_error: !!errorMessage,
+                        }
+                    ]
+                };
+                this.messageHistory.push(toolResultMessage);
+
+                // Generar mensaje para mostrar al usuario sobre la llamada (opcional)
+                const toolMessage = `[Llamada a ${toolName} ejecutada. Resultado procesado.]`;
                 finalText.push(toolMessage);
 
-                this.messageHistory.push({
-                    role: "user",
-                    content: result.content as string,
-                });
-
-                const response = await this.llm.messages.create({
-                    model: "claude-3-5-sonnet-20241022",
+                // Llamar al LLM de nuevo con el historial actualizado (incluyendo el tool_result)
+                console.log("[MCPClient] Calling LLM again with tool result...");
+                const finalLLMResponse = await this.llm.messages.create({
+                    model: "claude-3-5-sonnet-20241022", // Usar el mismo modelo que la primera llamada
                     max_tokens: 1000,
                     messages: this.messageHistory,
+                    system: systemPrompt,
                 });
 
-                const responseText = response.content[0].type === "text" ? response.content[0].text : "";
-                finalText.push(responseText);
+                // Procesar la respuesta final del LLM
+                let finalResponseText = "";
+                if (finalLLMResponse.content.length > 0 && finalLLMResponse.content[0].type === "text") {
+                    finalResponseText = finalLLMResponse.content[0].text;
+                } else {
+                    console.warn("[MCPClient] LLM did not return text after tool call.");
+                    finalResponseText = "(El asistente no proporcionó texto adicional)"; // O manejar diferente
+                }
+
+                finalText.push(finalResponseText);
 
                 this.messageHistory.push({
                     role: "assistant",
-                    content: responseText,
+                    content: finalResponseText,
                 });
             }
         }

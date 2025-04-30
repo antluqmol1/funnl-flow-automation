@@ -3,12 +3,23 @@ import { Spinner } from '../ui/spinner';
 import { type Message } from '../../pages/Agent';
 import { formatDistanceToNow } from 'date-fns';
 import { es } from 'date-fns/locale';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface MessageProps {
   message: Message;
 }
 
-const Message: React.FC<MessageProps> = ({ message }) => {
+const markdownComponents = {
+    p: ({node, ...props}: any) => <p className="mb-1 last:mb-0" {...props} />,
+    ul: ({node, ...props}: any) => <ul className="list-disc list-inside pl-5 my-1 space-y-1" {...props} />,
+    ol: ({node, ...props}: any) => <ol className="list-decimal list-inside pl-5 my-1 space-y-1" {...props} />,
+    li: ({node, ...props}: any) => <li className="pb-0.5" {...props} />,
+    strong: ({node, ...props}: any) => <strong className="font-semibold" {...props} />,
+    a: ({node, ...props}: any) => <a className="text-blue-400 underline hover:text-blue-300" target="_blank" rel="noopener noreferrer" {...props} />,
+};
+
+const MessageComponent: React.FC<MessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
   
@@ -45,7 +56,14 @@ const Message: React.FC<MessageProps> = ({ message }) => {
             <span className="text-sm">Procesando audio...</span>
           </div>
         ) : (
-          <p className="text-sm">{message.content}</p>
+          <div className="text-sm">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={markdownComponents}
+            >
+                {message.content}
+            </ReactMarkdown>
+          </div>
         )}
         
         {isUser && (
@@ -58,4 +76,4 @@ const Message: React.FC<MessageProps> = ({ message }) => {
   );
 };
 
-export default Message; 
+export default MessageComponent; 

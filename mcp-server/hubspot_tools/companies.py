@@ -12,6 +12,7 @@ from hubspot.crm.objects.models import SimplePublicObjectInput
 from hubspot.crm.objects.models import PublicObjectSearchRequest
 from hubspot.crm.objects.models import SimplePublicObjectBatchInput
 from hubspot.crm.objects.models import BatchInputSimplePublicObjectBatchInput
+from hubspot.crm.objects.models import Filter, FilterGroup
 
 # Configurar logging
 logger = logging.getLogger(__name__)
@@ -251,14 +252,13 @@ async def obtener_empresa_hubspot(company_id: str, user_id: str = None):
         logger.error(f"Error obteniendo empresa de HubSpot: {e}")
         return {"error": f"Error: {str(e)}"}
 
-async def crear_empresa_hubspot(name: str, description: str = "", industry: str = "", city: str = "", user_id: str = None):
+async def crear_empresa_hubspot(name: str, description: str = "", city: str = "", user_id: str = None):
     """
     Crea una nueva empresa en HubSpot.
     
     Args:
         name: Nombre de la empresa
         description: Descripción de la empresa
-        industry: Industria de la empresa
         city: Ciudad de la empresa
         user_id: ID del usuario para obtener su token específico
         
@@ -276,31 +276,113 @@ async def crear_empresa_hubspot(name: str, description: str = "", industry: str 
         
         # Preparar propiedades
         properties = {
-            "name": name
+            "name": name,
+            "city": city
         }
         
-        # Añadir propiedades adicionales si están disponibles
-        if description:
-            properties["description"] = description
-        if industry:
-            properties["industry"] = industry
-        if city:
-            properties["city"] = city
+        # --- Inicio: Inferir Industria ---
+        inferred_industry = None
+        # Mapeo (simplificado - añadir más según sea necesario)
+        # Claves: palabras clave (minúsculas) | Valores: Valores válidos de HubSpot Industry
+        industry_mapping = {
+            "account": "ACCOUNTING",
+            "airline": "AIRLINES_AVIATION",
+            "aviation": "AIRLINES_AVIATION",
+            "fashion": "APPAREL_FASHION",
+            "apparel": "APPAREL_FASHION",
+            "architect": "ARCHITECTURE_PLANNING",
+            "planning": "ARCHITECTURE_PLANNING",
+            "auto": "AUTOMOTIVE",
+            "car": "AUTOMOTIVE",
+            "bank": "BANKING",
+            "biotech": "BIOTECHNOLOGY",
+            "software": "COMPUTER_SOFTWARE",
+            "hardware": "COMPUTER_HARDWARE",
+            "network": "COMPUTER_NETWORKING", # O COMPUTER_NETWORK_SECURITY
+            "security": "COMPUTER_NETWORK_SECURITY",
+            "it": "INFORMATION_TECHNOLOGY_AND_SERVICES",
+            "tech": "INFORMATION_TECHNOLOGY_AND_SERVICES", # O TECHNOLOGY
+            "internet": "INTERNET",
+            "construct": "CONSTRUCTION",
+            "build": "CONSTRUCTION",
+            "electronic": "CONSUMER_ELECTRONICS", # O ELECTRICAL_ELECTRONIC_MANUFACTURING
+            "consumer": "CONSUMER_GOODS", # O CONSUMER_SERVICES
+            "service": "CONSUMER_SERVICES", # O INFORMATION_SERVICES, etc.
+            "cosmetic": "COSMETICS",
+            "education": "EDUCATION_MANAGEMENT", # O HIGHER_EDUCATION, PRIMARY_SECONDARY_EDUCATION
+            "learn": "E_LEARNING",
+            "entertain": "ENTERTAINMENT",
+            "environ": "ENVIRONMENTAL_SERVICES", # O RENEWABLES_ENVIRONMENT
+            "event": "EVENTS_SERVICES",
+            "financ": "FINANCIAL_SERVICES",
+            "food": "FOOD_BEVERAGES", # O FOOD_PRODUCTION
+            "beverage": "FOOD_BEVERAGES",
+            "furniture": "FURNITURE",
+            "health": "HEALTH_WELLNESS_AND_FITNESS", # O HOSPITAL_HEALTH_CARE, MENTAL_HEALTH_CARE
+            "hospital": "HOSPITAL_HEALTH_CARE", # O HOSPITALITY
+            "hr": "HUMAN_RESOURCES",
+            "insurance": "INSURANCE",
+            "legal": "LEGAL_SERVICES",
+            "law": "LAW_PRACTICE",
+            "logistic": "LOGISTICS_AND_SUPPLY_CHAIN",
+            "supply": "LOGISTICS_AND_SUPPLY_CHAIN",
+            "consult": "MANAGEMENT_CONSULTING",
+            "market": "MARKETING_AND_ADVERTISING", # O MARKET_RESEARCH
+            "advertis": "MARKETING_AND_ADVERTISING",
+            "media": "MEDIA_PRODUCTION", # O BROADCAST_MEDIA, ONLINE_MEDIA
+            "medical": "MEDICAL_DEVICES", # O MEDICAL_PRACTICE
+            "nonprofit": "NON_PROFIT_ORGANIZATION_MANAGEMENT",
+            "non-profit": "NON_PROFIT_ORGANIZATION_MANAGEMENT",
+            "oil": "OIL_ENERGY",
+            "energy": "OIL_ENERGY",
+            "pharma": "PHARMACEUTICALS",
+            "estate": "REAL_ESTATE",
+            "restaurant": "RESTAURANTS",
+            "retail": "RETAIL",
+            "telecom": "TELECOMMUNICATIONS",
+            "transport": "TRANSPORTATION_TRUCKING_RAILROAD",
+            "truck": "TRANSPORTATION_TRUCKING_RAILROAD",
+            "utilit": "UTILITIES",
+            "wholesal": "WHOLESALE",
+            # Para "MovilesLuque":
+            "mobile": "TELECOMMUNICATIONS", # O WIRELESS, CONSUMER_ELECTRONICS
+            "phone": "TELECOMMUNICATIONS"
+        }
+        
+        # Combinar texto de nombre y descripción para análisis
+        text_to_analyze = f"{name.lower()} {description.lower()}"
+        words = text_to_analyze.split()
+        
+        # Buscar coincidencias (se puede mejorar la lógica)
+        found_industries = []
+        for word in words:
+             # Simplificar palabra (quitar puntuación, etc. - se puede mejorar)
+            clean_word = ''.join(filter(str.isalnum, word))
+            for keyword, industry_value in industry_mapping.items():
+                if keyword in clean_word:
+                    found_industries.append(industry_value)
+        
+        # Decidir la industria (ej: la más frecuente si hay varias)
+        if found_industries:
+            from collections import Counter
+            most_common_industry = Counter(found_industries).most_common(1)[0][0]
+            inferred_industry = most_common_industry
+            logger.info(f"Industria inferida para '{name}': {inferred_industry}")
+        else:
+            logger.info(f"No se pudo inferir industria para '{name}'")
+            
+        # Añadir al diccionario de propiedades si se infirió una
+        if inferred_industry:
+            properties["industry"] = inferred_industry
+        # --- Fin: Inferir Industria ---
         
         # Verificar si la empresa ya existe
         # Buscar por nombre para evitar duplicados
+        # Usar los modelos del SDK para la búsqueda
+        name_filter = Filter(property_name="name", operator="EQ", value=name)
+        filter_group = FilterGroup(filters=[name_filter])
         search_request = PublicObjectSearchRequest(
-            filter_groups=[
-                {
-                    "filters": [
-                        {
-                            "property_name": "name",
-                            "operator": "EQ",
-                            "value": name
-                        }
-                    ]
-                }
-            ],
+            filter_groups=[filter_group],
             limit=1
         )
         
@@ -321,7 +403,7 @@ async def crear_empresa_hubspot(name: str, description: str = "", industry: str 
         # Crear la empresa
         simple_public_object_input = SimplePublicObjectInput(properties=properties)
         api_response = hubspot_client.crm.companies.basic_api.create(
-            simple_public_object_input=simple_public_object_input
+            simple_public_object_input_for_create=simple_public_object_input
         )
         
         return {

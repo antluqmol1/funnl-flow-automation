@@ -372,7 +372,7 @@ async def start_oauth(user_id: str = Depends(get_current_user)):
         f"?client_id={HUBSPOT_CLIENT_ID}"
         f"&scope={HUBSPOT_SCOPE}"
         f"&state={state}"
-        f"&redirect_uri={FRONTEND_URL}/auth/hubspot/callback"
+        f"&redirect_uri={FRONTEND_URL}/api/auth/hubspot/callback"
     )
     
     logger.info(f"URL de autorización generada: {auth_url[:100]}...")
@@ -418,7 +418,7 @@ async def oauth_callback(
                     "grant_type": "authorization_code",
                     "client_id": HUBSPOT_CLIENT_ID,
                     "client_secret": HUBSPOT_CLIENT_SECRET,
-                    "redirect_uri": f"{FRONTEND_URL}/auth/hubspot/callback", # Asegúrate que esta es la URI registrada en HubSpot
+                    "redirect_uri": f"{FRONTEND_URL}/api/auth/hubspot/callback", # Asegúrate que esta es la URI registrada en HubSpot
                     "code": code
                 }
             )

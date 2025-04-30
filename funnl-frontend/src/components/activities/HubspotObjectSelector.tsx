@@ -10,22 +10,17 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Loader2, Search, Plus, X, User, Building, Briefcase, TicketIcon } from 'lucide-react';
-import { useToast } from '@/components/ui/use-toast';
+import { Loader2, Search, Plus, X, User, Building, Briefcase, TicketIcon, ChevronsUpDown, PlusCircle } from 'lucide-react';
+import { toast } from "@/components/ui/use-toast";
 import { supabase } from "@/lib/supabase";
+import apiClient from "@/lib/axiosClient";
+import { HubspotObject } from "@/types/hubspot";
 
 // URL de la API
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
 // Cache de búsquedas
 const searchCache: Record<string, any[]> = {};
-
-interface HubspotObject {
-  id: string;
-  name: string;
-  type: 'deal' | 'ticket' | 'contact' | 'company';
-  properties?: Record<string, string>;
-}
 
 interface HubspotObjectSelectorProps {
   objectType: 'deal' | 'ticket' | 'contact' | 'company';
@@ -46,9 +41,6 @@ export default function HubspotObjectSelector({
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [objects, setObjects] = useState<HubspotObject[]>([]);
-  const [isConnectionChecked, setIsConnectionChecked] = useState(false);
-  const [isHubspotConnected, setIsHubspotConnected] = useState(false);
-  const { toast } = useToast();
   
   // Referencias para los timeouts
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -70,45 +62,6 @@ export default function HubspotObjectSelector({
     }
     wasOpen.current = open;
   }, [open]);
-
-  // Verificar si HubSpot está conectado al montar el componente
-  useEffect(() => {
-    const checkHubspotConnection = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session) {
-          setIsHubspotConnected(false);
-          setIsConnectionChecked(true);
-          return;
-        }
-
-        const response = await fetch(`${API_URL}/hubspot/status`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Accept': 'application/json'
-          }
-        });
-
-        if (!response.ok) {
-          setIsHubspotConnected(false);
-          setIsConnectionChecked(true);
-          return;
-        }
-
-        const data = await response.json();
-        setIsHubspotConnected(data.connected);
-        setIsConnectionChecked(true);
-      } catch (err) {
-        console.error('Error checking HubSpot connection:', err);
-        setIsHubspotConnected(false);
-        setIsConnectionChecked(true);
-      }
-    };
-
-    if (!isConnectionChecked) {
-      checkHubspotConnection();
-    }
-  }, [isConnectionChecked]);
 
   // Manejar cambios en el input
   const handleInputChange = (value: string) => {
@@ -135,13 +88,17 @@ export default function HubspotObjectSelector({
 
   // Buscar objetos cuando cambia el término de búsqueda (con debounce)
   useEffect(() => {
-    if (!isHubspotConnected || searchTerm.length < 2) return;
+    // Solo buscar si el término es suficientemente largo
+    if (searchTerm.length < 2) {
+      // Opcional: limpiar resultados si el término es muy corto
+      // setObjects([]); 
+      return; 
+    }
 
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
     
-    // Verificar en caché antes de realizar la búsqueda
     const cacheKey = `${objectType}:${searchTerm.toLowerCase()}`;
     if (searchCache[cacheKey]) {
       setObjects(searchCache[cacheKey]);
@@ -149,29 +106,28 @@ export default function HubspotObjectSelector({
     }
 
     searchTimeoutRef.current = setTimeout(() => {
+      // Llamar a la búsqueda directamente
       searchObjects(searchTerm);
-    }, 150); // Reducido a 150ms para mayor respuesta
+    }, 300); // Aumentado ligeramente el debounce para no saturar
 
+    // Limpieza del timeout
     return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     };
-  }, [searchTerm, isHubspotConnected, objectType]);
+  // Dependencias simplificadas
+  }, [searchTerm, objectType]); 
   
   // Abrir automáticamente el popover cuando se enfoca el botón
   const handleButtonFocus = () => {
-    if (!open && isConnectionChecked && isHubspotConnected) {
+    if (!open /* && isConnectionChecked && isHubspotConnected */) { // Chequeos eliminados
       setOpen(true);
     }
   };
 
   const searchObjects = async (query: string) => {
-    if (!isHubspotConnected || query.length < 2) return;
-    
+    if (query.length < 2) return; 
+
     const cacheKey = `${objectType}:${query.toLowerCase()}`;
     if (searchCache[cacheKey]) {
       setObjects(searchCache[cacheKey]);
@@ -181,57 +137,79 @@ export default function HubspotObjectSelector({
     setIsLoading(true);
     setError(null);
     
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) throw new Error('No hay sesión activa');
-      
-      // Endpoint personalizado para buscar objetos en HubSpot
-      const response = await fetch(`${API_URL}/hubspot/search`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          type: objectType,
-          query: query
-        })
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Error buscando en HubSpot: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      const results = data.results || [];
-      
-      // Guardar en caché para futuras búsquedas
-      searchCache[cacheKey] = results;
-      
-      // También almacenar resultados parciales si hay suficientes
-      if (results.length > 0 && query.length >= 3) {
-        const terms = query.toLowerCase().split(/\s+/);
-        terms.forEach(term => {
-          if (term.length >= 2) {
-            const partialCacheKey = `${objectType}:${term}`;
-            // Solo almacenar si no existe o si tiene menos resultados
-            if (!searchCache[partialCacheKey] || searchCache[partialCacheKey].length < results.length) {
-              searchCache[partialCacheKey] = results;
-            }
-          }
+    // --- MODIFICADO: Determinar API URL y función de transformación ---
+    let apiUrl = '';
+    let transformFunction = (item: any): HubspotObject => ({ 
+        id: item.id, 
+        name: 'Objeto Desconocido', 
+        type: objectType,
+        properties: item.properties // Incluir propiedades siempre
+    });
+
+    switch (objectType) {
+      case 'contact':
+        apiUrl = '/api/hubspot/contacts/search';
+        transformFunction = (item: any) => ({
+          id: item.id,
+          name: `${item.properties?.firstname || ''} ${item.properties?.lastname || ''}`.trim() || 'Contacto sin nombre',
+          type: 'contact',
+          properties: item.properties 
         });
-      }
-      
-      setObjects(results);
-    } catch (err) {
-      console.error('Error searching HubSpot objects:', err);
-      setError(err instanceof Error ? err.message : 'Error buscando objetos');
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: err instanceof Error ? err.message : "No se pudieron cargar los objetos de HubSpot"
+        break;
+      case 'company':
+        apiUrl = '/api/hubspot/companies/search'; // Endpoint para empresas
+        transformFunction = (item: any) => ({
+          id: item.id,
+          name: item.properties?.name || 'Empresa sin nombre', // Usar propiedad name
+          type: 'company',
+          properties: item.properties
+        });
+        break;
+      // Añadir casos para 'deal' y 'ticket' si es necesario
+      // case 'deal':
+      //   apiUrl = '/api/hubspot/deals/search';
+      //   transformFunction = (item: any) => ({ /* ... */ });
+      //   break;
+      // case 'ticket':
+      //   apiUrl = '/api/hubspot/tickets/search';
+      //   transformFunction = (item: any) => ({ /* ... */ });
+      //   break;
+      default:
+        console.error(`Tipo de objeto no soportado para búsqueda: ${objectType}`);
+        setError(`Tipo de objeto no soportado: ${objectType}`);
+        setIsLoading(false);
+        return;
+    }
+    // --- FIN MODIFICADO ---
+
+    try {
+      // --- MODIFICADO: Usar apiUrl dinámica ---
+      console.log(`[HubspotObjectSelector] Searching ${objectType} with query "${query}" at ${apiUrl}`);
+      const response = await apiClient.post<{ 
+        success: boolean; 
+        // Asumir la misma estructura de respuesta { data: { results: [...] } }
+        data: { total: number; results: any[] } 
+      }>(apiUrl, { // Solo enviar searchTerm según las rutas del backend
+        searchTerm: query 
       });
+      
+      // Extraer resultados (asumiendo la estructura anidada)
+      const rawResults = response.data?.data?.results || []; 
+      console.log(`[HubspotObjectSelector] Raw ${objectType} results:`, rawResults);
+
+      // --- MODIFICADO: Usar transformFunction dinámica ---
+      const transformedResults: HubspotObject[] = rawResults.map(transformFunction);
+
+      console.log(`[HubspotObjectSelector] Transformed ${objectType} results:`, transformedResults);
+
+      searchCache[cacheKey] = transformedResults;
+      setObjects(transformedResults);
+
+    } catch (err: any) {
+      console.error(`Error searching HubSpot ${objectType}:`, err);
+      const errorMessage = err.response?.data?.message || err.response?.data?.detail || err.message || `Error buscando ${getTypeLabel(objectType)}`;
+      setError(errorMessage);
+      toast({ variant: "destructive", title: "Error de Búsqueda", description: errorMessage });
       setObjects([]);
     } finally {
       setIsLoading(false);
@@ -240,9 +218,10 @@ export default function HubspotObjectSelector({
   };
 
   const handleSelect = (object: HubspotObject) => {
+    console.log('[HubspotObjectSelector] handleSelect called with:', object);
     onSelect(object);
     setOpen(false);
-    setSearchTerm(''); // Limpiar búsqueda al seleccionar
+    setSearchTerm('');
   };
 
   const clearSelection = () => {
@@ -269,147 +248,91 @@ export default function HubspotObjectSelector({
     }
   };
 
-  // Si no hay conexión a HubSpot, mostrar botón de conectar
-  if (isConnectionChecked && !isHubspotConnected) {
-    return (
-      <div className="space-y-2">
-        <Button 
-          variant="outline" 
-          className="w-full text-orange-600 border-orange-200"
-          onClick={() => {
-            // Redirigir a la página de configuración de HubSpot
-            window.location.href = '/settings';
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Conectar con HubSpot primero
-        </Button>
-        <p className="text-xs text-gray-500">
-          Para vincular tareas con objetos de HubSpot, primero debes conectar tu cuenta en Configuración.
-        </p>
-      </div>
-    );
-  }
+  // Obtener nombre y botón para mostrar
+  const selectedObjectName = selectedObject?.name || null;
+  const displayButtonText = selectedObjectName ? selectedObjectName : `Seleccionar ${getTypeLabel(objectType)}...`;
 
   return (
-    <div className="w-full space-y-2">
-      {/* Mostrar el objeto seleccionado o el selector */}
-      {selectedObject ? (
-        <div className="flex items-center gap-2">
-          <Badge variant="outline" className="flex items-center gap-1">
-            {getTypeIcon(selectedObject.type)}
-            <span className="text-sm font-medium">{getTypeLabel(selectedObject.type)}:</span>
-            <span className="text-sm">{selectedObject.name}</span>
-          </Badge>
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            onClick={clearSelection}
-            className="h-6 w-6 p-0 text-gray-400"
+    <div className="flex items-center space-x-2">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            className="w-[200px] justify-between"
+            onFocus={handleButtonFocus}
           >
-            <X className="h-3 w-3" />
-            <span className="sr-only">Quitar</span>
+            {selectedObject ? (
+              <>
+                {getTypeIcon(selectedObject.type)}
+                <span className="truncate">{selectedObject.name}</span>
+              </>
+            ) : (
+              `Seleccionar ${getTypeLabel(objectType)}...`
+            )}
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
-        </div>
-      ) : (
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button 
-              variant="outline" 
-              className="w-full justify-start text-left font-normal"
-              disabled={!isConnectionChecked || isLoading}
-              onFocus={handleButtonFocus}
-            >
-              {isLoading ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Search className="mr-2 h-4 w-4" />
+        </PopoverTrigger>
+        <PopoverContent className="w-[300px] p-0">
+          <Command shouldFilter={false}>
+            <div className="flex items-center border-b px-3">
+              <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
+              <CommandInput 
+                ref={inputRef}
+                placeholder={`Buscar ${getTypeLabel(objectType)}...`}
+                value={searchTerm}
+                onValueChange={handleInputChange}
+                className="flex h-10 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 border-0 focus:ring-0"
+              />
+              {(isLoading || isTyping) && <Loader2 className="h-4 w-4 animate-spin text-gray-400" />}
+            </div>
+            <CommandList>
+              {error && <CommandEmpty>{error}</CommandEmpty>}
+              {!isLoading && !error && objects.length === 0 && searchTerm.length >= 2 && (
+                 <CommandEmpty>No se encontraron resultados.</CommandEmpty>
               )}
-              <span>Buscar {getTypeLabel(objectType).toLowerCase()} en HubSpot...</span>
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="p-0" align="start" alignOffset={-5} style={{ width: "300px", maxHeight: "400px" }}>
-            <Command shouldFilter={false}>
-              <div className="relative">
-                <CommandInput 
-                  ref={inputRef}
-                  placeholder={`Buscar ${getTypeLabel(objectType).toLowerCase()}...`} 
-                  value={searchTerm}
-                  onValueChange={handleInputChange}
-                  className="pr-8"
-                />
-                {isTyping && (
-                  <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
-                    <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                  </div>
-                )}
-              </div>
-              
-              {searchTerm.length === 1 && (
-                <div className="px-4 py-2 text-xs text-gray-500">
-                  Escribe al menos 2 caracteres para buscar...
-                </div>
+              {!error && objects.length === 0 && searchTerm.length < 2 && (
+                <CommandEmpty>Escribe para buscar...</CommandEmpty>
               )}
-              
-              <CommandList>
-                <CommandEmpty>
-                  {isLoading ? (
-                    <div className="flex flex-col items-center justify-center py-6">
-                      <Loader2 className="h-8 w-8 animate-spin text-gray-400 mb-2" />
-                      <p className="text-sm text-gray-500">Buscando en HubSpot...</p>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="py-3 text-center text-sm">No se encontraron resultados.</p>
-                      {onCreate && (
-                        <Button 
-                          variant="link" 
-                          className="w-full justify-center" 
-                          onClick={() => {
-                            setOpen(false);
-                            onCreate();
-                          }}
-                        >
-                          <Plus className="mr-2 h-4 w-4" />
-                          Crear nuevo
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </CommandEmpty>
-                
-                {objects.length > 0 && (
-                  <CommandGroup heading={`Resultados para ${getTypeLabel(objectType)}`}>
-                    {objects.map((obj) => (
-                      <CommandItem 
-                        key={obj.id}
-                        onSelect={() => handleSelect(obj)}
-                        className="flex items-start gap-2 cursor-pointer hover:bg-gray-100 transition-colors p-2"
-                      >
-                        <div className="flex-1 overflow-hidden">
-                          <div className="font-medium flex items-center truncate">
-                            {getTypeIcon(obj.type)}
-                            {obj.name}
-                          </div>
-                          {obj.properties?.email && (
-                            <div className="text-xs text-gray-500 truncate">{obj.properties.email}</div>
-                          )}
-                          {obj.properties?.phone && (
-                            <div className="text-xs text-gray-500 truncate">{obj.properties.phone}</div>
-                          )}
-                          {obj.properties?.amount && (
-                            <div className="text-xs text-gray-500 truncate">{obj.properties.amount}</div>
-                          )}
-                        </div>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                )}
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+              {!error && objects.length > 0 && (
+                <CommandGroup>
+                  {objects.map((object) => (
+                    <CommandItem
+                      key={object.id}
+                      value={object.name} 
+                      onSelect={() => handleSelect(object)}
+                      className="flex items-center justify-between"
+                    >
+                      <span className="flex items-center truncate">
+                        {getTypeIcon(object.type)}
+                        {object.name}
+                      </span>
+                      {/* --- MODIFICADO: Mostrar info relevante según el tipo --- */}
+                      {object.type === 'contact' && object.properties?.email && <Badge variant="outline" className="ml-2 text-xs">{object.properties.email}</Badge>}
+                      {object.type === 'company' && object.properties?.domain && <Badge variant="outline" className="ml-2 text-xs">{object.properties.domain}</Badge>}
+                      {/* Añadir más casos si es necesario */}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
+          {onCreate && (
+            <div className="p-2 border-t">
+              <Button variant="ghost" className="w-full justify-start" onClick={() => { onCreate(); setOpen(false); }}>
+                <PlusCircle className="mr-2 h-4 w-4" />
+                Crear nuevo {getTypeLabel(objectType)}
+              </Button>
+            </div>
+          )}
+        </PopoverContent>
+      </Popover>
+      {selectedObject && (
+        <Button variant="ghost" size="sm" onClick={clearSelection} className="text-muted-foreground">
+          <X className="h-4 w-4" />
+        </Button>
       )}
     </div>
   );
-} 
+}

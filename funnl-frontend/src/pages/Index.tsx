@@ -6,7 +6,7 @@ import NextBestAction from '@/components/activities/NextBestAction';
 import TaskList from '@/components/activities/TaskList';
 import TaskForm from '@/components/activities/TaskForm';
 import { useToast } from '@/components/ui/use-toast';
-import { useSyncAllWithHubspotMutation } from '@/hooks/useHubspotSync';
+import { useSyncAllContactsMutation, useSyncAllDealsMutation } from '@/hooks/useHubspotSync';
 import HubspotConfig from '@/components/automations/HubspotConfig';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,7 +33,8 @@ const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const syncAllMutation = useSyncAllWithHubspotMutation();
+  const syncContactsMutation = useSyncAllContactsMutation();
+  const syncDealsMutation = useSyncAllDealsMutation();
   const [isHubspotConnected, setIsHubspotConnected] = useState(false);
   const { data: tasks = [] } = useTasksQuery();
   const todayTasks = getTodayTasks(tasks);
@@ -46,7 +47,8 @@ const Index = () => {
       description: "Actualizando datos de HubSpot...",
       duration: 3000,
     });
-    syncAllMutation.mutate();
+    syncContactsMutation.mutate();
+    syncDealsMutation.mutate();
   };
 
   useEffect(() => {
@@ -62,7 +64,8 @@ const Index = () => {
       searchParams.delete('hubspot_connected');
       setSearchParams(searchParams, { replace: true });
 
-      syncAllMutation.mutate(); 
+      syncContactsMutation.mutate();
+      syncDealsMutation.mutate(); 
     }
 
     if (hubspotError) {
@@ -75,66 +78,47 @@ const Index = () => {
       searchParams.delete('hubspot_error');
       setSearchParams(searchParams, { replace: true });
     }
-  }, [searchParams, setSearchParams, toast, navigate, syncAllMutation]);
+  }, [searchParams, setSearchParams, toast, navigate, syncContactsMutation, syncDealsMutation]);
 
   useEffect(() => {
-    if (syncAllMutation.isSuccess) {
+    const contactsSuccess = syncContactsMutation.isSuccess;
+    const dealsSuccess = syncDealsMutation.isSuccess;
+    const contactsError = syncContactsMutation.isError;
+    const dealsError = syncDealsMutation.isError;
+
+    if (contactsSuccess && dealsSuccess) {
       toast({
         title: "Sincronización Completa",
-        description: "Los datos iniciales de HubSpot han sido vinculados.",
+        description: "Los datos iniciales de HubSpot (contactos y deals) han sido vinculados.",
       });
+    } else if (contactsSuccess && !dealsSuccess && !syncDealsMutation.isPending) {
+        toast({
+          title: "Sincronización Parcial",
+          description: "Contactos sincronizados. Procesando deals...",
+        });
+    } else if (!contactsSuccess && dealsSuccess && !syncContactsMutation.isPending) {
+         toast({
+          title: "Sincronización Parcial",
+          description: "Deals sincronizados. Procesando contactos...",
+        });
     }
-    if (syncAllMutation.isError) {
+    
+    if (contactsError || dealsError) {
+      const errorMsgContacts = contactsError ? (syncContactsMutation.error?.message || "Error sincronizando contactos.") : "";
+      const errorMsgDeals = dealsError ? (syncDealsMutation.error?.message || "Error sincronizando deals.") : "";
+      const combinedErrorMsg = [errorMsgContacts, errorMsgDeals].filter(Boolean).join(' ');
+      
       toast({
         variant: "destructive",
         title: "Error de Sincronización",
-        description: syncAllMutation.error?.message || "No se pudo completar la sincronización inicial con HubSpot.",
+        description: combinedErrorMsg || "No se pudo completar la sincronización inicial con HubSpot.",
       });
     }
-  }, [syncAllMutation.isSuccess, syncAllMutation.isError, syncAllMutation.error, toast]);
-
-  useEffect(() => {
-    // Comprobamos los diferentes parámetros que pueden llegar desde el backend o frontend
-    const hubspotConnected = searchParams.get('hubspot_connected');
-    const hubspotSuccess = searchParams.get('hubspot'); // Nuevo parámetro del backend
-    const hubspotError = searchParams.get('hubspot_error');
-    const hubspotErrorMsg = searchParams.get('message'); // Parámetro de error adicional
-
-    // Si hubspot=success está presente, manejamos la conexión exitosa
-    if (hubspotSuccess === 'success' || hubspotConnected === 'true') {
-      toast({
-        title: "HubSpot Conectado",
-        description: "Tu cuenta de HubSpot se ha conectado correctamente. Iniciando sincronización...",
-        duration: 5000,
-      });
-      
-      // Limpiamos los parámetros de URL
-      searchParams.delete('hubspot');
-      searchParams.delete('hubspot_connected');
-      setSearchParams(searchParams, { replace: true });
-
-      // Iniciamos la sincronización
-      syncAllMutation.mutate(); 
-    }
-
-    // Manejamos errores, tanto del formato antiguo como del nuevo
-    if (hubspotError || hubspotSuccess === 'error') {
-      const errorMessage = hubspotErrorMsg || hubspotError || "Error desconocido";
-      
-      toast({
-        variant: "destructive",
-        title: "Error de conexión con HubSpot",
-        description: `Hubo un problema durante la conexión: ${errorMessage}. Inténtalo de nuevo desde Ajustes.`,
-        duration: 7000,
-      });
-      
-      // Limpiamos los parámetros de error
-      searchParams.delete('hubspot');
-      searchParams.delete('hubspot_error');
-      searchParams.delete('message');
-      setSearchParams(searchParams, { replace: true });
-    }
-  }, [searchParams, setSearchParams, toast, navigate, syncAllMutation]);
+  }, [
+      syncContactsMutation.isSuccess, syncContactsMutation.isError, syncContactsMutation.error, syncContactsMutation.isPending,
+      syncDealsMutation.isSuccess, syncDealsMutation.isError, syncDealsMutation.error, syncDealsMutation.isPending, 
+      toast
+  ]);
 
   // Formatear fecha actual
   const todayFormatted = format(new Date(), "EEEE, d 'de' MMMM", { locale: es });
@@ -265,13 +249,13 @@ const Index = () => {
   );
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 pb-20">
       <PageHeader 
         title="Daily" 
         subtitle="Gestiona tus tareas y citas"
       />
       
-      {syncAllMutation.isPending && (
+      {(syncContactsMutation.isPending || syncDealsMutation.isPending) && (
         <div className="p-4 text-center text-sm text-gray-600 bg-blue-50 border-b border-blue-200">
           Sincronizando datos iniciales con HubSpot...
         </div>

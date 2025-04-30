@@ -11,7 +11,7 @@ const BottomNavbar = () => {
   };
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex justify-around items-center p-2 pt-3 pb-7 shadow-md z-50">
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex justify-around items-center p-2 pt-3 shadow-md z-50">
       <Link to="/" className={getLinkClass('/')}>
         <CalendarClock className="tab-icon" />
         <span>Daily</span>

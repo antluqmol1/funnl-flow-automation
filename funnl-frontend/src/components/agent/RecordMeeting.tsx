@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { requestTranscription } from '@/services/whisperService';
 
 // URL de la API
-const API_URL = import.meta.env.VITE_MCP_API_URL || 'http://localhost:3001';
+const API_URL = import.meta.env.VITE_API_URL  || 'http://localhost:3001';
 
 interface RecordingState {
   isRecording: boolean;

@@ -1,5 +1,6 @@
 import { supabase } from "@/lib/supabase";
 import { PostgrestError } from "@supabase/supabase-js";
+import apiClient from '@/lib/axiosClient';
 
 // Define interfaces for our data models
 export interface Contact {
@@ -41,6 +42,7 @@ export interface Task {
   hubspot_status: string | null;
   hubspot_last_synced: string | null;
   sync_status: 'synced' | 'pending' | 'error' | null;
+  hubspot_task_id?: string | null;
 }
 
 export interface FunnelStage {
@@ -98,8 +100,8 @@ export interface Recording {
   id: string;
   title: string;
   contact_id: string | null;
-  // date: string; // Este campo parece no usarse y no estar en la BD, considerar eliminar
-  // duration: string; // Debería ser number (duration_seconds) o string?
+  date: string; // Este campo parece no usarse y no estar en la BD, considerar eliminar
+  duration: string; // Debería ser number (duration_seconds) o string?
   transcription: string | null;
   summary: string | null;
   key_points: string[] | null;
@@ -108,11 +110,22 @@ export interface Recording {
   file_path?: string | null;
   user_id?: string | null;
   status?: 'recorded' | 'processing' | 'completed' | 'failed' | null; // <-- Actualizado
+  segments?: Array<{ start: number; end: number; text: string;[key: string]: any }> | null; // <-- Añadido tipo para segmentos
   // Campos potenciales de la tabla meeting_recordings:
   file_name?: string | null;
   size_bytes?: number | null;
   mime_type?: string | null;
   duration_seconds?: number | null; // Usar este en lugar de duration?
+
+  // --- NUEVO: Añadir campo para acciones sugeridas ---
+  suggested_actions?: Array<{
+    id: string;
+    description: string;
+    mcp_tool: string;
+    arguments: any; // Usamos 'any' por simplicidad, podría tiparse más estrictamente
+    confirmation_required: boolean;
+  }> | null;
+  // --- FIN NUEVO ---
 }
 
 export interface Automation {
@@ -126,12 +139,12 @@ export interface Automation {
   updated_at: string | null;
 }
 
-// Definición de la interfaz FunnelStageWithContacts
-export interface FunnelStageWithContacts {
+// --- MODIFIED: Make interface generic using 'items' ---
+export interface FunnelStageWithItems {
   id: number;
   name: string;
   color: string;
-  contacts: (Contact & { tasksCount?: number })[];
+  items: (Contact | Deal)[]; // Array can hold Contacts or Deals
 }
 
 // Contacts services
@@ -297,142 +310,85 @@ export const getFunnelStages = async (): Promise<FunnelStage[]> => {
   return data || [];
 };
 
-// Get funnel stages with contacts for each stage
-export const getFunnelStagesWithContacts = async (): Promise<FunnelStageWithContacts[]> => {
+// --- MODIFIED: getFunnelStagesWithContacts to use 'items' and new interface ---
+export const getFunnelStagesWithContacts = async (): Promise<FunnelStageWithItems[]> => {
   try {
     const session = await supabase.auth.getSession();
-
     if (!session.data.session) {
       console.error('No hay sesión activa para obtener las etapas del funnel');
       return [];
     }
 
-    // Obtener todas las etapas del pipeline para mapear stage_id a posiciones del funnel
     const { data: pipelineStages, error: pipelineStagesError } = await supabase
-      .from('pipeline_stages')
-      .select('*');
-
+      .from('pipeline_stages').select('*');
     if (pipelineStagesError) {
       console.error('Error fetching pipeline stages:', pipelineStagesError);
       return [];
     }
 
-    // Crear un mapeo de stage_id a etapa del funnel basado en nombres normalizados
     const stageIdToFunnelStageMap: Record<string, string> = {};
-
     if (pipelineStages) {
       pipelineStages.forEach((stage) => {
         const stageName = stage.name.toLowerCase();
-
-        if (stageName.includes('suscriptor')) stageIdToFunnelStageMap[stage.id] = 'subscriber';
-        else if (stageName.includes('lead')) stageIdToFunnelStageMap[stage.id] = 'lead';
-        else if (stageName.includes('mql')) stageIdToFunnelStageMap[stage.id] = 'mql';
-        else if (stageName.includes('sql')) stageIdToFunnelStageMap[stage.id] = 'sql';
-        else if (stageName.includes('oportunidad') || stageName.includes('opportunity'))
-          stageIdToFunnelStageMap[stage.id] = 'opportunity';
-        else if (stageName.includes('cliente') || stageName.includes('customer'))
-          stageIdToFunnelStageMap[stage.id] = 'customer';
-        else if (stageName.includes('evangelista') || stageName.includes('evangelist'))
-          stageIdToFunnelStageMap[stage.id] = 'evangelist';
-        else
-          stageIdToFunnelStageMap[stage.id] = 'otros'; // Etapa por defecto para valores desconocidos
+        if (stageName.includes('suscriptor')) stageIdToFunnelStageMap[stage.id] = 'Suscriptores';
+        else if (stageName.includes('lead')) stageIdToFunnelStageMap[stage.id] = 'Leads';
+        else if (stageName.includes('mql')) stageIdToFunnelStageMap[stage.id] = 'MQLs';
+        else if (stageName.includes('sql')) stageIdToFunnelStageMap[stage.id] = 'SQLs';
+        else if (stageName.includes('oportunidad') || stageName.includes('opportunity')) stageIdToFunnelStageMap[stage.id] = 'Oportunidades';
+        else if (stageName.includes('cliente') || stageName.includes('customer')) stageIdToFunnelStageMap[stage.id] = 'Clientes';
+        else if (stageName.includes('evangelista') || stageName.includes('evangelist')) stageIdToFunnelStageMap[stage.id] = 'Evangelistas';
+        else stageIdToFunnelStageMap[stage.id] = 'Otros';
       });
     }
 
-    // Obtener todos los contactos en una sola consulta
     const { data: contacts, error: contactsError } = await supabase
-      .from('contacts')
-      .select('*, tasks(*)');
-
+      .from('contacts').select('*, tasks(*)');
     if (contactsError) {
       console.error('Error fetching contacts:', contactsError);
       return [];
     }
 
-    // Definir las etapas del funnel con sus colores correspondientes
-    const funnelStages: FunnelStageWithContacts[] = [
-      { id: 1, name: 'Suscriptores', color: '#94A3B8', contacts: [] },
-      { id: 2, name: 'Leads', color: '#FCD34D', contacts: [] },
-      { id: 3, name: 'MQLs', color: '#FCA5A5', contacts: [] },
-      { id: 4, name: 'SQLs', color: '#FDBA74', contacts: [] },
-      { id: 5, name: 'Oportunidades', color: '#A5B4FC', contacts: [] },
-      { id: 6, name: 'Clientes', color: '#86EFAC', contacts: [] },
-      { id: 7, name: 'Evangelistas', color: '#A78BFA', contacts: [] },
-      { id: 8, name: 'Otros', color: '#CBD5E1', contacts: [] },
+    // Define stages using the new interface
+    const funnelStages: FunnelStageWithItems[] = [
+      { id: 1, name: 'Suscriptores', color: '#94A3B8', items: [] },
+      { id: 2, name: 'Leads', color: '#FCD34D', items: [] },
+      { id: 3, name: 'MQLs', color: '#FCA5A5', items: [] },
+      { id: 4, name: 'SQLs', color: '#FDBA74', items: [] },
+      { id: 5, name: 'Oportunidades', color: '#A5B4FC', items: [] },
+      { id: 6, name: 'Clientes', color: '#86EFAC', items: [] },
+      { id: 7, name: 'Evangelistas', color: '#A78BFA', items: [] },
+      { id: 8, name: 'Otros', color: '#CBD5E1', items: [] },
     ];
 
-    // Helper para normalizar los status y hacerlos consistentes
     const normalizeStatus = (status: string): string => {
       const lowerStatus = status.toLowerCase();
-
-      if (lowerStatus.includes('suscriptor') || lowerStatus.includes('subscriber')) return 'subscriber';
-      if (lowerStatus.includes('lead')) return 'lead';
-      if (lowerStatus.includes('mql')) return 'mql';
-      if (lowerStatus.includes('sql')) return 'sql';
-      if (lowerStatus.includes('oportunidad') || lowerStatus.includes('opportunity')) return 'opportunity';
-      if (lowerStatus.includes('cliente') || lowerStatus.includes('customer')) return 'customer';
-      if (lowerStatus.includes('evangelista') || lowerStatus.includes('evangelist')) return 'evangelist';
-
-      return 'otros';
+      if (lowerStatus.includes('suscriptor') || lowerStatus.includes('subscriber')) return 'Suscriptores';
+      if (lowerStatus.includes('lead')) return 'Leads';
+      if (lowerStatus.includes('mql')) return 'MQLs';
+      if (lowerStatus.includes('sql')) return 'SQLs';
+      if (lowerStatus.includes('oportunidad') || lowerStatus.includes('opportunity')) return 'Oportunidades';
+      if (lowerStatus.includes('cliente') || lowerStatus.includes('customer')) return 'Clientes';
+      if (lowerStatus.includes('evangelista') || lowerStatus.includes('evangelist')) return 'Evangelistas';
+      return 'Otros';
     };
 
-    // Asignar contactos a etapas basados en stage_id o status
     if (contacts) {
       contacts.forEach((contactData: any) => {
         const tasksCount = contactData.tasks ? contactData.tasks.length : 0;
-        const contact = {
-          ...contactData,
-          tasksCount
-        } as Contact & { tasksCount: number };
-
-        let assigned = false;
-        let mappedStatus = '';
-
-        // Primero intentamos asignar por stage_id si existe
+        const contact = { ...contactData, tasksCount } as Contact & { tasksCount: number };
+        let mappedFunnelStageName = 'Otros'; // Default to Otros
         if (contact.stage_id && stageIdToFunnelStageMap[contact.stage_id]) {
-          mappedStatus = stageIdToFunnelStageMap[contact.stage_id];
-          assigned = true;
+          mappedFunnelStageName = stageIdToFunnelStageMap[contact.stage_id];
+        } else if (contact.status) {
+          mappedFunnelStageName = normalizeStatus(contact.status);
         }
-        // Si no, intentamos asignar por el campo status
-        else if (contact.status) {
-          mappedStatus = normalizeStatus(contact.status);
-          assigned = true;
-        }
-
-        // Actualizar el status del contacto para que el filtrado funcione correctamente
-        contact.status = mappedStatus || 'otros';
-
-        // Asignar a la etapa correspondiente según el status normalizado
-        switch (mappedStatus) {
-          case 'subscriber':
-            funnelStages[0].contacts.push(contact);
-            break;
-          case 'lead':
-            funnelStages[1].contacts.push(contact);
-            break;
-          case 'mql':
-            funnelStages[2].contacts.push(contact);
-            break;
-          case 'sql':
-            funnelStages[3].contacts.push(contact);
-            break;
-          case 'opportunity':
-            funnelStages[4].contacts.push(contact);
-            break;
-          case 'customer':
-            funnelStages[5].contacts.push(contact);
-            break;
-          case 'evangelist':
-            funnelStages[6].contacts.push(contact);
-            break;
-          default:
-            // Si no coincide con ninguna categoría, lo asignamos a "Otros"
-            funnelStages[7].contacts.push(contact);
-            break;
+        contact.status = mappedFunnelStageName; // Update status for filtering consistency
+        const targetStage = funnelStages.find(fs => fs.name === mappedFunnelStageName);
+        if (targetStage) {
+          targetStage.items.push(contact); // Push to items array
         }
       });
     }
-
     return funnelStages;
   } catch (error) {
     console.error('Error in getFunnelStagesWithContacts:', error);
@@ -557,6 +513,22 @@ export const getDealsByStage = async (stageId: string): Promise<Deal[]> => {
   return data || [];
 };
 
+// --- Added getContactsByStage function ---
+export const getContactsByStage = async (stageId: string): Promise<Contact[]> => {
+  const { data, error } = await supabase
+    .from('contacts') // Query the contacts table
+    .select('*')      // Select all contact fields (or specify needed ones)
+    .eq('stage_id', stageId); // Filter by stage_id
+
+  if (error) {
+    console.error(`Error fetching contacts for stage ${stageId}:`, error);
+    throw error;
+  }
+
+  return data || [];
+};
+// --- End added function ---
+
 // Helper utility for formatting currency
 export const formatCurrency = (value: number, currency = 'USD'): string => {
   return new Intl.NumberFormat('en-US', {
@@ -612,7 +584,7 @@ export const syncDealWithHubspot = async (
     }
 
     // Realizamos la sincronización con HubSpot
-    const API_URL = process.env.NEXT_PUBLIC_API_URL || '';
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'; // Default for safety
     const hubspotResponse = await fetch(`${API_URL}/api/hubspot/sync-deal`, {
       method: 'POST',
       headers: {
@@ -622,7 +594,7 @@ export const syncDealWithHubspot = async (
       body: JSON.stringify({
         id: dealId,
         type: 'deal',
-        force: true,
+        force: true, // Consider if force should always be true
         stage_name: stageName,
         stage_position: stagePosition
       })
@@ -654,7 +626,7 @@ export const searchHubspotDeals = async (query: string): Promise<{ deals: any[] 
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw new Error('No hay sesión activa');
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
     const response = await fetch(`${API_URL}/hubspot/search`, {
       method: 'POST',
       headers: {
@@ -771,11 +743,12 @@ export const deleteDeal = async (id: string): Promise<void> => {
   }
 };
 
+// --- MODIFIED getPipelineWithStages function ---
 export const getPipelineWithStages = async (pipelineId: string) => {
-  // First get the pipeline
+  // First get the pipeline details to determine its type
   const { data: pipeline, error: pipelineError } = await supabase
     .from('pipelines')
-    .select('*')
+    .select('id, name, description, is_active, icon, color, sort_order') // Assume a 'type' column exists or infer from name
     .eq('id', pipelineId)
     .single();
 
@@ -788,89 +761,93 @@ export const getPipelineWithStages = async (pipelineId: string) => {
     throw new Error(`Pipeline with ID ${pipelineId} not found`);
   }
 
+  // Determine if it's a contact pipeline (inferring from name as before)
+  // In a real scenario, a dedicated 'type' column ('CONTACT' | 'DEAL') in the pipelines table would be better.
+  const isContactPipeline = pipeline.name.toLowerCase().includes('contacto');
+
   // Get all stages for this pipeline
   const stages = await getPipelineStages(pipelineId);
 
-  // For each stage, get the deals
-  const stagesWithDeals = await Promise.all(
+  // For each stage, get the appropriate items (contacts or deals)
+  const stagesWithItems = await Promise.all(
     stages.map(async (stage) => {
-      const deals = await getDealsByStage(stage.id);
+      let items = [];
+      try {
+        if (isContactPipeline) {
+          items = await getContactsByStage(stage.id);
+        } else {
+          items = await getDealsByStage(stage.id);
+        }
+      } catch (error) {
+        console.error(`Error fetching items for stage ${stage.id} in pipeline ${pipelineId}:`, error);
+        // Continue fetching for other stages, return empty items for this one
+      }
       return {
         ...stage,
-        deals
+        items: items // Use a consistent 'items' key
       };
     })
   );
 
   return {
     ...pipeline,
-    stages: stagesWithDeals
+    stages: stagesWithItems // Return stages with 'items' array
   };
 };
+// --- End MODIFIED function ---
 
 // Busca empresas en HubSpot por término de búsqueda
 export const searchHubspotCompanies = async (query: string): Promise<{ results: any[] }> => {
   try {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) throw new Error('No hay sesión activa');
+    // apiClient ya incluye el token, no se necesita getSession aquí
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    const response = await fetch(`${API_URL}/hubspot/search`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${data.session.access_token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        type: 'companies',
-        query: query
-      })
+    // Endpoint correcto
+    const apiUrl = '/api/hubspot/companies/search';
+
+    // Llamada con apiClient y payload correcto
+    const response = await apiClient.post<{
+      success: boolean;
+      data: { total: number; results: any[] }
+    }>(apiUrl, {
+      searchTerm: query
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || 'Error buscando empresas en HubSpot');
-    }
+    // Devolver solo los resultados como antes, o adaptar donde se llama esta función
+    return response.data.data || { results: [] }; // Extraer de la estructura anidada
 
-    const result = await response.json();
-    return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error buscando empresas en HubSpot:', error);
-    // Devolvemos un array vacío en caso de error para mantener la estructura de retorno
-    return { results: [] };
+    // Lanzar el error para que el componente que llama pueda manejarlo
+    // O devolver un objeto con error si se prefiere no lanzar
+    const errorMessage = error.response?.data?.message || error.message || 'Error buscando empresas en HubSpot';
+    throw new Error(errorMessage);
   }
 };
 
 // Busca contactos en HubSpot por término de búsqueda
 export const searchHubspotContacts = async (query: string): Promise<{ results: any[] }> => {
   try {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) throw new Error('No hay sesión activa');
+    // apiClient ya incluye el token, no se necesita getSession aquí
 
-    const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-    const response = await fetch(`${API_URL}/hubspot/search`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${data.session.access_token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        type: 'contacts',
-        query: query
-      })
+    // Endpoint correcto
+    const apiUrl = '/api/hubspot/contacts/search';
+
+    // Llamada con apiClient y payload correcto
+    const response = await apiClient.post<{
+      success: boolean;
+      data: { total: number; results: any[] }
+    }>(apiUrl, {
+      searchTerm: query
     });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.detail || 'Error buscando contactos en HubSpot');
-    }
+    // Devolver solo los resultados como antes, o adaptar donde se llama esta función
+    return response.data.data || { results: [] }; // Extraer de la estructura anidada
 
-    const result = await response.json();
-    return result;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error buscando contactos en HubSpot:', error);
-    // Devolvemos un array vacío en caso de error para mantener la estructura de retorno
-    return { results: [] };
+    // Lanzar el error para que el componente que llama pueda manejarlo
+    const errorMessage = error.response?.data?.message || error.message || 'Error buscando contacts en HubSpot';
+    throw new Error(errorMessage);
   }
 };
 
@@ -1043,3 +1020,114 @@ export const syncPipelineContactsWithFunnel = async (): Promise<{ success: boole
     return { success: false, message: 'Error en la sincronización' };
   }
 };
+
+// --- Added deleteContact function ---
+export const deleteContact = async (contactId: string): Promise<void> => {
+  const { error } = await supabase
+    .from('contacts')
+    .delete()
+    .eq('id', contactId);
+
+  if (error) {
+    console.error(`Error deleting contact ${contactId}:`, error);
+    throw error;
+  }
+};
+// --- End added function ---
+
+// --- Added updateContact function ---
+export const updateContact = async (id: string, updates: Partial<Contact>): Promise<Contact> => {
+  // Asegurarse de actualizar el timestamp
+  const updatesWithTimestamp = {
+    ...updates,
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('contacts')
+    .update(updatesWithTimestamp)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error(`Error updating contact ${id}:`, error);
+    throw error;
+  }
+
+  // TODO: Considerar si se necesita sincronizar con HubSpot después de actualizar
+  // try { syncContactWithHubspot(id); } catch(e) { console.warn('Sync failed') }
+
+  return data;
+};
+// --- End added function ---
+
+// --- MODIFIED: getSalesFunnelData to use 'items' and new interface ---
+export const getSalesFunnelData = async (): Promise<FunnelStageWithItems[]> => {
+  try {
+    const session = await supabase.auth.getSession();
+    if (!session.data.session) {
+      console.error('No active session for fetching sales funnel data');
+      return [];
+    }
+
+    // Define stages using the new interface
+    const salesFunnelStages: FunnelStageWithItems[] = [
+      { id: 1, name: 'Captado', color: '#BFDBFE', items: [] },
+      { id: 2, name: 'Cultivado', color: '#FDE68A', items: [] },
+      { id: 3, name: 'Demo', color: '#FECACA', items: [] },
+      { id: 4, name: 'Negociación', color: '#FED7AA', items: [] },
+      { id: 5, name: 'Ganado', color: '#A7F3D0', items: [] },
+    ];
+
+    const allPipelines = await getPipelines();
+    const salesPipeline = allPipelines.find(p => !p.name.toLowerCase().includes('contacto'));
+    if (!salesPipeline) {
+      console.error("Sales pipeline not found.");
+      return [];
+    }
+    const pipelineStages = await getPipelineStages(salesPipeline.id);
+
+    const stageIdToFunnelMap: Record<string, string> = {};
+    pipelineStages.forEach(stage => {
+      const stageNameLower = stage.name.toLowerCase();
+      if (stageNameLower.includes('captado')) stageIdToFunnelMap[stage.id] = 'Captado';
+      else if (stageNameLower.includes('cultivado')) stageIdToFunnelMap[stage.id] = 'Cultivado';
+      else if (stageNameLower.includes('demo')) stageIdToFunnelMap[stage.id] = 'Demo';
+      else if (stageNameLower.includes('negociación')) stageIdToFunnelMap[stage.id] = 'Negociación';
+      else if (stageNameLower.includes('ganado')) stageIdToFunnelMap[stage.id] = 'Ganado';
+    });
+
+    const lostStageId = pipelineStages.find(s => s.name.toLowerCase().includes('perdido'))?.id;
+    let query = supabase.from('deals').select('*');
+    if (lostStageId) {
+      query = query.neq('stage_id', lostStageId);
+    }
+    const { data: deals, error: dealsError } = await query;
+
+    if (dealsError) {
+      console.error('Error fetching deals:', dealsError);
+      return [];
+    }
+
+    if (deals) {
+      deals.forEach(deal => {
+        if (deal.stage_id && stageIdToFunnelMap[deal.stage_id]) {
+          const targetFunnelStageName = stageIdToFunnelMap[deal.stage_id];
+          const targetStage = salesFunnelStages.find(fs => fs.name === targetFunnelStageName);
+          if (targetStage) {
+            targetStage.items.push(deal as Deal); // Push Deal to items array
+          }
+        }
+      });
+    }
+
+    // No need to rename, already using 'items'
+    return salesFunnelStages;
+
+  } catch (error) {
+    console.error('Error fetching sales funnel data:', error);
+    return [];
+  }
+};
+// --- End added function ---

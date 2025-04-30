@@ -180,15 +180,18 @@ const TranscriptionViewerContent: React.FC = () => {
   return (
     <Card className="w-full">
       <CardHeader className="pb-2">
-        <div className="flex justify-between items-center">
+        {/* Contenedor principal del header que cambia con el tamaño de pantalla */}
+        <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center">
+          {/* Título y Badge */}
           <div className="flex items-center gap-2">
             <CardTitle className="text-lg">Transcripción</CardTitle>
             <Badge variant={status === 'completed' ? 'default' : 'outline'}>
               {status === 'completed' ? 'Completada' : status}
             </Badge>
           </div>
-          
-          <div className="flex space-x-2">
+
+          {/* Botones de acción (con margen y alineación responsivos) */}
+          <div className="flex space-x-2 mt-4 justify-end lg:mt-0">
             {!isEditing && (
               <>
                 <Button
@@ -230,18 +233,18 @@ const TranscriptionViewerContent: React.FC = () => {
                 <FileTextIcon className="h-4 w-4 mr-2" />
                 Transcripción
               </TabsTrigger>
-              {summary && (
+              {/* {summary && (  // Comentado o eliminado
                 <TabsTrigger value="resumen">
                   <BookmarkIcon className="h-4 w-4 mr-2" />
                   Resumen
                 </TabsTrigger>
-              )}
-              {keyPoints && keyPoints.length > 0 && (
+              )} */}
+              {/* {keyPoints && keyPoints.length > 0 && ( // Comentado o eliminado
                 <TabsTrigger value="puntos-clave">
                   <ListIcon className="h-4 w-4 mr-2" />
                   Puntos Clave
                 </TabsTrigger>
-              )}
+              )} */}
               <TabsTrigger value="buscar">
                 <SearchIcon className="h-4 w-4 mr-2" />
                 Buscar
@@ -250,7 +253,7 @@ const TranscriptionViewerContent: React.FC = () => {
             
             <TabsContent value="transcripcion" className="mt-0">
               {/* Vista de transcripción con opciones de visualización */}
-              <div className="mb-4 flex flex-wrap gap-2 pb-2 border-b">
+              <div className="mb-4 flex flex-col sm:flex-row sm:flex-wrap gap-2 pb-2 border-b">
                 <Button
                   variant={viewMode === 'plain' ? 'default' : 'outline'}
                   size="sm"
@@ -298,7 +301,7 @@ const TranscriptionViewerContent: React.FC = () => {
               </div>
             </TabsContent>
             
-            {summary && (
+            {/* {summary && ( // Comentado o eliminado
               <TabsContent value="resumen" className="mt-0">
                 <div className="bg-gray-50 p-4 rounded-md border border-gray-200 max-h-[400px] overflow-y-auto">
                   <h3 className="font-medium mb-2">Resumen de la reunión</h3>
@@ -317,9 +320,9 @@ const TranscriptionViewerContent: React.FC = () => {
                   </div>
                 </div>
               </TabsContent>
-            )}
+            )} */}
             
-            {keyPoints && keyPoints.length > 0 && (
+            {/* {keyPoints && keyPoints.length > 0 && ( // Comentado o eliminado
               <TabsContent value="puntos-clave" className="mt-0">
                 <div className="bg-gray-50 p-4 rounded-md border border-gray-200 max-h-[400px] overflow-y-auto">
                   <h3 className="font-medium mb-2">Puntos Clave</h3>
@@ -342,7 +345,7 @@ const TranscriptionViewerContent: React.FC = () => {
                   </div>
                 </div>
               </TabsContent>
-            )}
+            )} */}
             
             <TabsContent value="buscar" className="mt-0">
               <div className="mb-4 flex items-center gap-2">

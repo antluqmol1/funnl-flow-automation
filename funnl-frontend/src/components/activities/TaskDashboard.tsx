@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { useTasksQuery, useUpdateTaskMutation } from '@/hooks/useTasks';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useTasksQuery, useUpdateTaskMutation, useDeleteTaskMutation } from '@/hooks/useTasks';
 import { type Task } from '@/services/supabaseService';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,7 +19,10 @@ import {
   Phone,
   Mail,
   Users,
-  Clipboard
+  Clipboard,
+  Undo2,
+  Trash2,
+  Check
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,7 +34,7 @@ import {
 } from '@/components/ui/select';
 import TaskList from './TaskList';
 import TaskForm from './TaskForm';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { format, isToday, isPast, isFuture, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { Badge } from '@/components/ui/badge';
@@ -50,12 +53,26 @@ import {
   DragEndEvent,
   UniqueIdentifier,
   useDraggable,
-  useDroppable
+  useDroppable,
+  Active,
+  Over
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import PriorityBadge from '@/components/shared/PriorityBadge';
+
+// --- CSS Específico para Ocultar Scrollbars ---
+const hideScrollbarStyles = `
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none; /* WebKit */
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+`;
+// --- Fin CSS --- 
 
 // Función para obtener las tareas de hoy
 const getTodayTasks = (tasks: Task[]) => {
@@ -129,35 +146,40 @@ type SortOption = 'date-asc' | 'date-desc' | 'priority-asc' | 'priority-desc' | 
 type ColumnType = 'todo' | 'inProgress' | 'done';
 type ColumnStatus = 'pending' | 'overdue' | 'completed';
 
-interface DraggableTaskProps {
-  id: string;
-  task: Task;
-  availableActions: ('todo' | 'inProgress' | 'done')[];
-  onMoveTask: (taskId: string, newStatus: 'pending' | 'overdue' | 'completed') => Promise<void>;
+interface PendingDeletionInfo {
+  timerId: NodeJS.Timeout;
+  timeLeft: number; // Segundos restantes
 }
 
-// Componente de tarea arrastrable
-const DraggableTask: React.FC<DraggableTaskProps> = ({ id, task, availableActions, onMoveTask }) => {
-  // Configurar draggable
+// Define las props para DraggableTask
+interface DraggableTaskProps {
+  task: Task;
+  isDragging: boolean;
+  isPendingDeletion?: boolean; // Indica si está pendiente de eliminación
+  timeLeft?: number; // Tiempo restante para eliminación automática
+  onDelete: (taskId: string) => void; // Función para eliminar
+}
+
+// Componente para una tarea individual que se puede arrastrar
+const DraggableTask: React.FC<DraggableTaskProps> = ({ 
+  task, 
+  isDragging, 
+  isPendingDeletion, 
+  timeLeft, 
+  onDelete, 
+}) => {
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
-    id: id,
-    data: {
-      type: 'task',
-      task: task
-    }
+    id: task.id,
+    data: { task },
   });
 
   const style = {
-    transform: CSS.Translate.toString(transform)
+    transform: CSS.Transform.toString(transform),
+    opacity: isDragging ? 0.5 : 1,
+    transition: 'opacity 0.2s ease-in-out, background-color 0.3s ease',
+    backgroundColor: isPendingDeletion ? '#fef9c3' : 'white',
   };
 
-  // Validar que la tarea existe
-  if (!task || !task.id) {
-    console.error('Intentando renderizar una tarea indefinida o sin ID');
-    return null;
-  }
-
-  // Manejar el formato de fecha con seguridad
   let formattedDate = "Fecha no disponible";
   if (task.time) {
     try {
@@ -170,7 +192,6 @@ const DraggableTask: React.FC<DraggableTaskProps> = ({ id, task, availableAction
     }
   }
 
-  // Determinar el icono basado en el tipo de actividad
   const getActivityIcon = () => {
     if (!task.type) return <Calendar className="h-4 w-4 text-gray-500" aria-hidden="true" />;
     
@@ -193,49 +214,47 @@ const DraggableTask: React.FC<DraggableTaskProps> = ({ id, task, availableAction
     }
   };
 
+  const handleDeleteClick = (e: React.MouseEvent) => {
+    e.stopPropagation(); 
+    onDelete(task.id);
+  };
+
   return (
-    <motion.div 
-      ref={setNodeRef} 
-      style={style} 
-      {...attributes} 
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
       {...listeners}
-      className="border rounded-lg p-3 mb-3 bg-white shadow-sm cursor-move hover:shadow-md transition-all duration-200 ease-in-out"
-      whileHover={{ scale: 1.02 }}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2 }}
-      role="article"
-      aria-label={`Tarea: ${task.title}`}
+      className={`p-3 mb-2 rounded-md shadow-sm border border-gray-200 cursor-grab ${isDragging ? 'opacity-50' : ''} ${isPendingDeletion ? 'bg-yellow-50' : 'bg-white'}`}
     >
-      <div className="flex items-start justify-between mb-2">
-        <div className="flex-1">
-          <div className="flex justify-between items-start">
-            <div className="flex items-center gap-2">
-              {getActivityIcon()}
-              <h3 className="font-medium text-sm sm:text-base line-clamp-2">{task.title}</h3>
-            </div>
-            <PriorityBadge 
-              priority={task.priority as 'high' | 'medium' | 'low'} 
-              className="ml-2" 
-            />
-          </div>
-          <p className="text-xs sm:text-sm text-gray-500 mt-1">
-            {formattedDate}
-          </p>
-        </div>
-        <GripVertical className="h-4 w-4 sm:h-5 sm:w-5 text-gray-400 ml-2 flex-shrink-0 touch-target" aria-hidden="true" />
+      <div className="flex justify-between items-start mb-1">
+        <span className={`font-medium text-sm ${isPendingDeletion ? 'text-gray-600' : 'text-gray-800'}`}>{task.title}</span>
+        <PriorityBadge priority={task.priority} />
       </div>
-      
-      {/* Solo mantenemos el botón de Pendiente cuando está disponible */}
-      {availableActions.includes('todo') && (
-        <div className="flex justify-end mt-3">
-          <Button size="sm" variant="outline" onClick={() => onMoveTask(task.id, 'pending')}
-                 className="h-7 text-xs sm:text-sm px-2 py-1 transition-colors duration-200 touch-target">
-            Pendiente
-          </Button>
-        </div>
-      )}
-    </motion.div>
+      <div className="flex justify-between items-center mt-2">
+          <div className={`text-xs ${isPendingDeletion ? 'text-gray-500' : 'text-gray-500'} flex items-center`}>
+            <Calendar size={12} className="mr-1" />
+            {formattedDate}
+          </div>
+          <div className="flex items-center space-x-2">
+            {isPendingDeletion && timeLeft !== undefined && timeLeft >= 0 && (
+              <span className="text-xs text-amber-700 flex items-center">
+                <Clock size={12} className="mr-1 animate-pulse" />
+                {timeLeft}s
+              </span>
+            )}
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={handleDeleteClick}
+              className="text-gray-400 hover:text-red-500 hover:bg-red-100 w-6 h-6"
+              aria-label="Eliminar tarea manualmente"
+            >
+              <Trash2 size={14} />
+            </Button>
+          </div>
+      </div>
+    </div>
   );
 };
 
@@ -246,9 +265,9 @@ interface TaskColumnProps {
   icon: React.ReactNode;
   tasks: Task[];
   bgColor: string;
-  availableActions: ('todo' | 'inProgress' | 'done')[];
   isLoading: boolean;
-  onMoveTask: (taskId: string, newStatus: 'pending' | 'overdue' | 'completed') => Promise<void>;
+  onDeleteTask: (taskId: string) => void; // Ahora es la eliminación definitiva
+  pendingDeletions: Map<string, PendingDeletionInfo>; // Mapa con info de timers
 }
 
 const TaskColumn: React.FC<TaskColumnProps> = ({ 
@@ -257,53 +276,64 @@ const TaskColumn: React.FC<TaskColumnProps> = ({
   icon, 
   tasks, 
   bgColor, 
-  availableActions, 
   isLoading, 
-  onMoveTask
+  onDeleteTask,
+  pendingDeletions
 }) => {
-  // Configuración de la zona donde soltar
-  const { setNodeRef } = useDroppable({
+  const { setNodeRef, isOver } = useDroppable({
     id: id,
-    data: {
-      type: 'column',
-      accepts: ['task']
-    }
+    data: { type: 'column', accepts: ['task'] }
   });
 
   return (
     <motion.div 
       ref={setNodeRef} 
-      className="h-full"
+      className={`flex-1 p-3 bg-gray-50 rounded-lg border ${isOver ? 'border-blue-400 bg-blue-50' : 'border-gray-200'}`}
+      style={{ minWidth: '280px' }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       transition={{ duration: 0.3, delay: id === 'todo' ? 0 : id === 'inProgress' ? 0.1 : 0.2 }}
     >
-      <Card className={`${bgColor} transition-shadow duration-300 hover:shadow-md h-full`}>
-        <CardHeader className="pb-2">
+      <Card className={`${bgColor} transition-shadow duration-300 hover:shadow-md h-full flex flex-col`}>
+        <CardHeader className="pb-2 flex-shrink-0">
           <CardTitle className="flex items-center text-sm sm:text-md">
             {icon}
             {title}
             <Badge variant="outline" className="ml-2 text-xs sm:text-sm">{tasks.length}</Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="p-2 sm:p-4 h-[calc(100%-60px)] overflow-y-auto scrollbar-hide">
+        <CardContent className="p-2 sm:p-4 flex-grow overflow-y-auto scrollbar-hide">
           {isLoading ? (
-            <div className="space-y-2">
+             <div className="space-y-2">
               <Skeleton className="h-20 w-full" />
               <Skeleton className="h-20 w-full" />
             </div>
           ) : (
             tasks.length > 0 ? (
               <div>
-                {tasks.map(task => (
-                  <DraggableTask 
-                    key={task.id}
-                    id={task.id}
-                    task={task} 
-                    availableActions={availableActions} 
-                    onMoveTask={onMoveTask} 
-                  />
-                ))}
+                <AnimatePresence>
+                  {tasks.map(task => {
+                    const deletionInfo = pendingDeletions.get(task.id);
+                    return (
+                      <motion.div
+                        key={task.id}
+                        layout
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <DraggableTask 
+                          task={task}
+                          isDragging={false}
+                          isPendingDeletion={!!deletionInfo}
+                          timeLeft={deletionInfo?.timeLeft}
+                          onDelete={onDeleteTask}
+                        />
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
               </div>
             ) : (
               <div className="text-center py-6 sm:py-8 text-gray-500 text-sm sm:text-base">
@@ -329,30 +359,20 @@ const mapColumnToStatus = (columnType: ColumnType): ColumnStatus => {
 
 const TaskDashboard: React.FC = () => {
   const { toast } = useToast();
-  const { data: tasks = [], isLoading, error, refetch } = useTasksQuery();
+  const { data: tasks = [], isLoading: isLoadingTasks, error: tasksError, refetch } = useTasksQuery();
   const { subscribed: isRealTimeEnabled, error: subscriptionError } = useTasksSubscription();
   const updateTaskMutation = useUpdateTaskMutation();
+  const deleteTaskMutation = useDeleteTaskMutation();
 
-  // Estado para el filtro de fecha actual
+  const [pendingDeletions, setPendingDeletions] = useState<Map<string, PendingDeletionInfo>>(new Map());
+
   const [dateFilter, setDateFilter] = useState<DateFilter>('today');
-  
-  // Estado para el diálogo de nueva tarea
   const [isNewTaskOpen, setIsNewTaskOpen] = useState(false);
-
-  // Estado para los filtros adicionales
-  const [filters, setFilters] = useState({
-    status: 'all',
-    priority: 'all',
-  });
-  
-  // Estado para la opción de ordenación
+  const [filters, setFilters] = useState({ status: 'all', priority: 'all' });
   const [sortOption, setSortOption] = useState<SortOption>('date-desc');
-
-  // Estado para drag and drop
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
-  // Configurar sensores para drag and drop
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -371,15 +391,15 @@ const TaskDashboard: React.FC = () => {
 
   // Mostrar un mensaje de error si hay algún problema
   useEffect(() => {
-    if (error) {
-      console.error('Error fetching tasks:', error);
+    if (tasksError) {
+      console.error('Error fetching tasks:', tasksError);
       toast({
         title: "Error",
         description: "No se pudieron cargar las tareas. Por favor, intenta de nuevo.",
         variant: "destructive",
       });
     }
-  }, [error, toast]);
+  }, [tasksError, toast]);
 
   // Mostrar un mensaje de error si hay algún problema con la suscripción
   useEffect(() => {
@@ -393,104 +413,82 @@ const TaskDashboard: React.FC = () => {
     }
   }, [subscriptionError, toast]);
 
+  // Limpieza simplificada al desmontar
+  useEffect(() => {
+    return () => {
+      console.log("TaskDashboard unmounting, clearing all pending deletion timers.");
+      pendingDeletions.forEach(info => clearTimeout(info.timerId));
+    };
+  }, [pendingDeletions]);
+
+  // useEffect para la cuenta atrás
+  useEffect(() => {
+    const intervalId = setInterval(() => {
+      setPendingDeletions(prev => {
+        const newMap = new Map(prev);
+        let changed = false;
+        newMap.forEach((info, taskId) => {
+          if (info.timeLeft > 0) {
+            newMap.set(taskId, { ...info, timeLeft: info.timeLeft - 1 });
+            changed = true;
+          } else {
+             // El estado se actualizó a 0, la tarea debería estar siendo eliminada por el setTimeout.
+             // Quitamos del mapa para que deje de mostrarse el contador.
+             if (newMap.has(taskId)) {
+                console.log(`Countdown interval reached 0 for ${taskId}, removing from pendingDeletions map.`);
+                newMap.delete(taskId);
+                changed = true; 
+             }
+          }
+        });
+        return changed ? newMap : prev;
+      });
+    }, 1000); 
+
+    return () => clearInterval(intervalId);
+  }, []);
+
   // Función para ordenar las tareas según la opción seleccionada
   const sortTasks = (tasksToSort: Task[]): Task[] => {
-    // Verificar si tasksToSort es un array y no está vacío
-    if (!Array.isArray(tasksToSort) || tasksToSort.length === 0) {
-      return [];
-    }
-    
-    // Crear una copia para evitar mutaciones
+    if (!Array.isArray(tasksToSort) || tasksToSort.length === 0) return [];
     const sortedTasks = [...tasksToSort];
-    
     try {
       switch (sortOption) {
-        case 'date-asc':
-          return sortedTasks.sort((a, b) => {
-            if (!a.time) return 1;
-            if (!b.time) return -1;
-            return new Date(a.time).getTime() - new Date(b.time).getTime();
-          });
-        case 'date-desc':
-          return sortedTasks.sort((a, b) => {
-            if (!a.time) return 1;
-            if (!b.time) return -1;
-            return new Date(b.time).getTime() - new Date(a.time).getTime();
-          });
+        case 'date-asc': return sortedTasks.sort((a, b) => (new Date(a.time || 0).getTime()) - (new Date(b.time || 0).getTime()));
+        case 'date-desc': return sortedTasks.sort((a, b) => (new Date(b.time || 0).getTime()) - (new Date(a.time || 0).getTime()));
         case 'priority-asc':
-          return sortedTasks.sort((a, b) => {
-            const priorityOrder = { high: 3, medium: 2, low: 1 };
-            return (priorityOrder[a.priority as keyof typeof priorityOrder] || 0) - 
-                   (priorityOrder[b.priority as keyof typeof priorityOrder] || 0);
-          });
+          const pa = { high: 3, medium: 2, low: 1 };
+          return sortedTasks.sort((a, b) => (pa[a.priority as keyof typeof pa] || 0) - (pa[b.priority as keyof typeof pa] || 0));
         case 'priority-desc':
-          return sortedTasks.sort((a, b) => {
-            const priorityOrder = { high: 3, medium: 2, low: 1 };
-            return (priorityOrder[b.priority as keyof typeof priorityOrder] || 0) - 
-                   (priorityOrder[a.priority as keyof typeof priorityOrder] || 0);
-          });
+          const pd = { high: 3, medium: 2, low: 1 };
+          return sortedTasks.sort((a, b) => (pd[b.priority as keyof typeof pd] || 0) - (pd[a.priority as keyof typeof pd] || 0));
         case 'status-asc':
-          return sortedTasks.sort((a, b) => {
-            const statusOrder = { pending: 1, overdue: 2, completed: 3 };
-            return (statusOrder[a.status as keyof typeof statusOrder] || 0) - 
-                   (statusOrder[b.status as keyof typeof statusOrder] || 0);
-          });
+          const sa = { pending: 1, overdue: 2, completed: 3 };
+          return sortedTasks.sort((a, b) => (sa[a.status as keyof typeof sa] || 0) - (sa[b.status as keyof typeof sa] || 0));
         case 'status-desc':
-          return sortedTasks.sort((a, b) => {
-            const statusOrder = { completed: 1, overdue: 2, pending: 3 };
-            return (statusOrder[a.status as keyof typeof statusOrder] || 0) - 
-                   (statusOrder[b.status as keyof typeof statusOrder] || 0);
-          });
-        default:
-          return sortedTasks;
+          const sd = { completed: 1, overdue: 2, pending: 3 };
+          return sortedTasks.sort((a, b) => (sd[a.status as keyof typeof sd] || 0) - (sd[b.status as keyof typeof sd] || 0));
+        default: return sortedTasks;
       }
-    } catch (error) {
-      console.error('Error al ordenar tareas:', error);
-      return [];
-    }
+    } catch (error) { console.error('Error sorting tasks:', error); return []; }
   };
 
   // Modificar la función getFilteredTasks para aplicar también la ordenación
   const getFilteredTasks = () => {
-    let filteredTasks: Task[] = [];
-
-    // Aplicar filtro de fecha
+    let filtered: Task[] = [];
     switch (dateFilter) {
-      case 'today':
-        filteredTasks = getTodayTasks(tasks);
-        break;
-      case 'overdue':
-        filteredTasks = getOverdueTasks(tasks);
-        break;
-      case 'upcoming':
-        filteredTasks = getUpcomingTasks(tasks);
-        break;
-      case 'all':
-      default:
-        filteredTasks = [...tasks];
-        break;
+      case 'today': filtered = getTodayTasks(tasks); break;
+      case 'overdue': filtered = getOverdueTasks(tasks); break;
+      case 'upcoming': filtered = getUpcomingTasks(tasks); break;
+      default: filtered = [...tasks]; break;
     }
-
-    // Aplicar filtros adicionales
-    if (filters.status !== 'all') {
-      filteredTasks = filteredTasks.filter(task => task.status === filters.status);
-    }
-    
-    if (filters.priority !== 'all') {
-      filteredTasks = filteredTasks.filter(task => task.priority === filters.priority);
-    }
-
-    // Aplicar ordenación
-    return sortTasks(filteredTasks);
+    if (filters.status !== 'all') filtered = filtered.filter(t => t.status === filters.status);
+    if (filters.priority !== 'all') filtered = filtered.filter(t => t.priority === filters.priority);
+    return sortTasks(filtered);
   };
 
   // Manejar cambios en los filtros adicionales
-  const handleFilterChange = (filterName: string, value: string) => {
-    setFilters(prev => ({
-      ...prev,
-      [filterName]: value
-    }));
-  };
+  const handleFilterChange = (name: string, value: string) => setFilters(p => ({ ...p, [name]: value }));
 
   // Manejar la creación de una nueva tarea
   const handleNewTaskComplete = () => {
@@ -505,125 +503,164 @@ const TaskDashboard: React.FC = () => {
 
   // Función para verificar si una tarea está vencida
   function isOverdue(task: Task): boolean {
-    if (!task || !task.time) return false;
-    
+    if (!task || !task.time || task.status === 'completed') return false; // Añadido chequeo de completed
     try {
       const taskDate = new Date(task.time);
-      // Verificar que la fecha sea válida
-      if (isNaN(taskDate.getTime())) return false;
-      return isPast(taskDate) && !isToday(taskDate);
-    } catch (e) {
-      console.error('Error al verificar fecha vencida:', e);
-      return false;
-    }
+      return !isNaN(taskDate.getTime()) && isPast(taskDate) && !isToday(taskDate);
+    } catch (e) { console.error('Error checking overdue:', e); return false; }
   }
 
-  // Función para mover una tarea a otro estado
-  const moveTask = async (taskId: string, newStatus: 'pending' | 'overdue' | 'completed') => {
+  // handleDeleteTask - con logs detallados
+  const handleDeleteTask = useCallback((taskId: string) => {
+    console.log(`[handleDeleteTask] Attempting delete for Task ID: ${taskId}`);
+    // Limpiar timer del estado si existe
+    setPendingDeletions(prev => {
+      const newMap = new Map(prev);
+      const info = newMap.get(taskId);
+      if (info) {
+        console.log(`[handleDeleteTask] Clearing timeout ${info.timerId} from state for ${taskId}.`);
+        clearTimeout(info.timerId); // Limpiar timer por si acaso
+        newMap.delete(taskId);
+        return newMap;
+      } 
+      console.log(`[handleDeleteTask] Task ${taskId} not found in pendingDeletions map (might be already cleared).`);
+      return prev; // Devuelve el estado anterior si no hubo cambios
+    });
+
+    console.log(`[handleDeleteTask] Calling deleteTaskMutation for Task ID: ${taskId}`);
+    deleteTaskMutation.mutate(taskId, {
+      onSuccess: () => {
+        console.log(`[Mutation Success] Successfully deleted Task ID: ${taskId}.`);
+        toast({ title: "Tarea eliminada", duration: 2000 }); 
+        console.log(`[Mutation Success] Calling refetch() after successful deletion of ${taskId}.`);
+        refetch(); // Re-obtener tareas para asegurar consistencia
+      },
+      onError: (error) => {
+        console.error(`[Mutation Error] Error deleting Task ID: ${taskId}:`, error);
+        toast({ title: "Error", description: "No se pudo eliminar la tarea.", variant: "destructive" });
+      }
+    });
+  }, [deleteTaskMutation, toast, refetch]);
+
+  // handleUndoDeleteTask - como función normal
+  const handleUndoDeleteTask = (taskId: string) => {
+    setPendingDeletions(prev => {
+      const newMap = new Map(prev);
+      const info = newMap.get(taskId);
+      if (info) {
+        console.log(`[handleUndoDeleteTask] Undoing deletion for ${taskId}. Clearing timeout ${info.timerId}.`);
+        clearTimeout(info.timerId);
+        newMap.delete(taskId);
+        return newMap; 
+      }
+      return prev; 
+    });
+  }; 
+
+  // startDeletionTimer - con logs detallados
+  const startDeletionTimer = useCallback((taskId: string) => {
+    handleUndoDeleteTask(taskId); // Limpiar estado/timer previo
+
+    console.log(`[Timer] Starting 60s deletion timer for Task ID: ${taskId}`);
+    const newTimerId = setTimeout(() => {
+      // --- Callback del setTimeout ---
+      console.log(`[Timer Callback] TIMEOUT FIRED for Task ID: ${taskId}. Calling handleDeleteTask.`);
+      handleDeleteTask(taskId); // Llama a la función de borrado real
+      // --- Fin Callback --- 
+    }, 60000); // 60 segundos
+
+    // Guardar info en el estado
+    setPendingDeletions(prev => {
+      const newMap = new Map(prev);
+      newMap.set(taskId, { timerId: newTimerId, timeLeft: 60 });
+      console.log(`[Timer] Task ${taskId} added to pendingDeletions map with timerId ${newTimerId}.`);
+      return newMap;
+    });
+
+  }, [handleDeleteTask]); // quitado handleUndoDeleteTask de dependencias
+
+  // moveTask (sin cambios)
+  const moveTask = async (taskId: string, newStatus: ColumnStatus) => {
     try {
-      await updateTaskMutation.mutateAsync({
-        id: taskId,
-        updates: { status: newStatus }
-      });
-      toast({
-        title: "Tarea actualizada",
-        description: "El estado de la tarea ha sido actualizado.",
-        duration: 3000,
-      });
+      if (newStatus === 'completed') { 
+        startDeletionTimer(taskId); 
+      } 
+      else { 
+        handleUndoDeleteTask(taskId); // Cancela timer si se mueve fuera
+      } 
+      await updateTaskMutation.mutateAsync({ id: taskId, updates: { status: newStatus } });
+      toast({ title: "Tarea actualizada", description: `Estado cambiado a ${newStatus}.`, duration: 3000 });
       refetch();
     } catch (error) {
       console.error('Error updating task status:', error);
-      toast({
-        title: "Error",
-        description: "No se pudo actualizar el estado de la tarea.",
-        variant: "destructive",
-      });
+      toast({ title: "Error", description: "No se pudo actualizar el estado.", variant: "destructive" });
     }
   };
 
   // Encontrar una tarea por su ID
-  const findTaskById = (id: string): Task | undefined => {
-    return tasks.find(task => task.id === id);
-  };
+  const findTaskById = (id: string): Task | undefined => tasks.find(task => task.id === id);
 
-  // Encontrar la columna que contiene una tarea
+  // Función auxiliar para encontrar la columna actual de una tarea
   const findColumnForTask = (taskId: string): ColumnType | null => {
     const task = findTaskById(taskId);
     if (!task) return null;
-    
-    if (task.status === 'completed') {
-      return 'done';
-    } else if (task.status === 'overdue' || (task.status === 'pending' && isOverdue(task))) {
-      return 'inProgress';
-    } else {
-      return 'todo';
-    }
+    if (task.status === 'completed') return 'done';
+    if (task.status === 'overdue' || (task.status === 'pending' && isOverdue(task))) return 'inProgress';
+    return 'todo';
   };
 
   // Handlers para DnD
   const handleDragStart = (event: DragStartEvent) => {
     const { active } = event;
     const taskId = active.id as string;
-    
-    // Verificar si active.data tiene información de la tarea
-    if (active.data.current?.task) {
-      setActiveTask(active.data.current.task as Task);
-    } else {
-      const task = findTaskById(taskId);
-      if (task) {
-        setActiveTask(task);
-      }
+    setActiveId(taskId);
+    if (pendingDeletions.has(taskId)) { 
+      console.log(`Drag started for pending deletion task ${taskId}. Cancelling timer.`);
+      handleUndoDeleteTask(taskId); // Cancela el timer al empezar a arrastrar
     }
-    
-    setActiveId(taskId.toString());
+    setActiveTask(active.data.current?.task as Task || findTaskById(taskId));
   };
 
-  const handleDragOver = (event: DragOverEvent) => {
-    // No necesitamos hacer nada aquí por ahora
-  };
+  const handleDragOver = (event: DragOverEvent) => { /* No action needed */ };
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
-    
-    if (!over) {
-      setActiveId(null);
-      setActiveTask(null);
-      return;
-    }
-    
-    const taskId = active.id as string;
-    const targetId = over.id as string;
-    
-    // Verificar si el over.id es un ID de columna
-    const columnsIds = ['todo', 'inProgress', 'done'];
-    if (columnsIds.includes(targetId)) {
-      // Determinar el nuevo estado según la columna
-      const newStatus = mapColumnToStatus(targetId as ColumnType);
-      
-      // Solo actualizar si el estado es diferente
-      const task = findTaskById(taskId);
-      if (task && (
-        (targetId === 'todo' && (task.status !== 'pending' || isOverdue(task))) ||
-        (targetId === 'inProgress' && !(task.status === 'overdue' || (task.status === 'pending' && isOverdue(task)))) ||
-        (targetId === 'done' && task.status !== 'completed')
-      )) {
-        toast({
-          title: "Moviendo tarea",
-          description: `Moviendo a ${targetId === 'todo' ? 'Pendientes' : targetId === 'inProgress' ? 'En progreso' : 'Completadas'}`,
-          duration: 2000,
-        });
-        await moveTask(taskId, newStatus);
-      }
-    }
-    
     setActiveId(null);
     setActiveTask(null);
+
+    if (!over || active.id === over.id) return; // No se movió o se soltó en el mismo sitio
+
+    const taskId = active.id as string;
+    const targetId = over.id as string; // Puede ser ID de columna o de otra tarea (si implementamos reordenar)
+    const task = findTaskById(taskId);
+
+    if (!task) return;
+
+    const columnsIds = ['todo', 'inProgress', 'done'];
+    const targetIsColumn = columnsIds.includes(targetId);
+
+    if (targetIsColumn) {
+      const newColumnId = targetId as ColumnType;
+      const currentColumnId = findColumnForTask(taskId); // Necesitamos esta función
+
+      if (newColumnId !== currentColumnId) {
+        const newStatus = mapColumnToStatus(newColumnId);
+        console.log(`Moving task ${taskId} from ${currentColumnId} to ${newColumnId} (status: ${newStatus})`);
+        await moveTask(taskId, newStatus); // moveTask ahora maneja los timers
+      }
+    } else {
+      // Lógica para reordenar dentro de una columna (si se implementa)
+      console.log(`Task ${taskId} dropped over task ${targetId}. Reordering not implemented yet.`);
+    }
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      {/* Acciones y filtros */}
-      <motion.div 
+    <div className="space-y-4 sm:space-y-6 overflow-hidden">
+      {/* --- Inyectar Estilos --- */}
+      <style>{hideScrollbarStyles}</style>
+      {/* --- Fin Inyectar Estilos --- */}
+      
+      <motion.div
         className="flex flex-col space-y-3 sm:space-y-0 sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-4"
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -641,13 +678,16 @@ const TaskDashboard: React.FC = () => {
             <DialogContent className="max-w-lg sm:max-w-xl">
               <DialogHeader>
                 <DialogTitle>Crear nueva tarea</DialogTitle>
+                <DialogDescription>
+                  Rellena los detalles para crear una nueva tarea. Puedes vincularla a HubSpot si has conectado tu cuenta.
+                </DialogDescription>
               </DialogHeader>
               <TaskForm onComplete={handleNewTaskComplete} />
             </DialogContent>
           </Dialog>
-          
+
           {/* Indicador de estado de tiempo real */}
-          <div className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded text-xs transition-colors duration-200" 
+          <div className="flex items-center gap-1 bg-gray-100 px-2 py-1 rounded text-xs transition-colors duration-200"
                aria-live="polite" aria-atomic="true">
             {isRealTimeEnabled ? (
               <>
@@ -661,11 +701,11 @@ const TaskDashboard: React.FC = () => {
               </>
             )}
           </div>
-          
-          <Button 
-            variant="outline" 
-            size="sm" 
-            onClick={() => refetch()} 
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetch()}
             className="h-8 text-xs sm:text-sm transition-all duration-200 touch-target"
             aria-label="Actualizar tareas"
           >
@@ -673,13 +713,13 @@ const TaskDashboard: React.FC = () => {
             <span className="sm:hidden">Act.</span>
           </Button>
         </div>
-        
+
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           <div className="flex items-center">
             <Filter className="h-3 w-3 sm:h-4 sm:w-4 text-gray-500 mr-1" aria-hidden="true" />
             <span className="text-xs sm:text-sm font-medium text-gray-500 mr-2">Filtros:</span>
           </div>
-          
+
           <Select
             value={sortOption}
             onValueChange={(value) => setSortOption(value as SortOption)}
@@ -694,7 +734,7 @@ const TaskDashboard: React.FC = () => {
               <SelectItem value="priority-asc">Prioridad (baja primero)</SelectItem>
             </SelectContent>
           </Select>
-          
+
           <Select
             value={filters.priority}
             onValueChange={(value) => handleFilterChange('priority', value)}
@@ -720,7 +760,7 @@ const TaskDashboard: React.FC = () => {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <motion.div 
+        <motion.div
           className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -732,42 +772,42 @@ const TaskDashboard: React.FC = () => {
             icon={<ListChecks className="h-4 w-4 sm:h-5 sm:w-5 mr-2 text-gray-500" />}
             tasks={todoTasks}
             bgColor="bg-gray-50"
-            availableActions={['inProgress', 'done']}
-            isLoading={isLoading}
-            onMoveTask={moveTask}
+            isLoading={isLoadingTasks}
+            onDeleteTask={handleDeleteTask}
+            pendingDeletions={pendingDeletions}
           />
-          
+
           <TaskColumn
             id="inProgress"
             title="En progreso"
             icon={<Clock className="h-4 w-4 sm:h-5 sm:w-5 mr-2 text-amber-500" />}
             tasks={inProgressTasks}
             bgColor="bg-amber-50"
-            availableActions={['todo', 'done']}
-            isLoading={isLoading}
-            onMoveTask={moveTask}
+            isLoading={isLoadingTasks}
+            onDeleteTask={handleDeleteTask}
+            pendingDeletions={pendingDeletions}
           />
-          
+
           <TaskColumn
             id="done"
             title="Completadas"
-            icon={<CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 mr-2 text-green-500" />}
+            icon={<Check size={16} className="text-green-500" />}
             tasks={doneTasks}
             bgColor="bg-green-50"
-            availableActions={['todo', 'inProgress']}
-            isLoading={isLoading}
-            onMoveTask={moveTask}
+            isLoading={isLoadingTasks}
+            onDeleteTask={handleDeleteTask}
+            pendingDeletions={pendingDeletions}
           />
         </motion.div>
-        
-        {/* Overlay para mostrar la tarea durante el arrastre */}
+
         <DragOverlay>
           {activeTask ? (
-            <DraggableTask 
-              id={`draggable-${activeTask.id}`}
+            <DraggableTask
               task={activeTask}
-              availableActions={[]}
-              onMoveTask={moveTask}
+              isDragging={true}
+              isPendingDeletion={pendingDeletions.has(activeTask.id)} 
+              timeLeft={pendingDeletions.get(activeTask.id)?.timeLeft} 
+              onDelete={() => {}} 
             />
           ) : null}
         </DragOverlay>

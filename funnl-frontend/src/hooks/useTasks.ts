@@ -10,9 +10,19 @@ import {
     syncTaskWithHubspot,
     type Task
 } from '@/services/supabaseService';
+import apiClient from '@/lib/axiosClient';
 
 // URL de la API del servidor
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
+// Query Key Factory
+const tasksKeys = {
+    all: ['tasks'] as const,
+    lists: () => ['tasks', 'list'] as const,
+    list: (filters: string) => ['tasks', 'list', filters] as const,
+    details: () => ['tasks', 'detail'] as const,
+    detail: (id: string) => ['tasks', 'detail', id] as const,
+};
 
 export const useTasksQuery = (enabled = true) => {
     return useQuery({
@@ -74,10 +84,19 @@ export const useDeleteTaskMutation = () => {
     const queryClient = useQueryClient();
 
     return useMutation({
-        mutationFn: (id: string) => deleteTask(id),
-        onSuccess: (_, id) => {
+        mutationFn: async (taskId: string) => {
+            // Llamar a la ruta del backend para eliminar
+            const response = await apiClient.delete(`/api/tasks/${taskId}`);
+            // Devolver los datos si es necesario, o simplemente esperar que no lance error
+            return response.data;
+        },
+        onSuccess: (_, taskId) => {
+            // Invalidar y refetch la lista de tareas después de eliminar
             queryClient.invalidateQueries({ queryKey: ['tasks'] });
-            queryClient.invalidateQueries({ queryKey: ['tasks', id] });
+            // Opcionalmente, eliminar la tarea del caché directamente
+            // queryClient.setQueryData(tasksKeys.all, (oldData: Task[] | undefined) => 
+            //   oldData?.filter(task => task.id !== taskId)
+            // );
         },
     });
 };
