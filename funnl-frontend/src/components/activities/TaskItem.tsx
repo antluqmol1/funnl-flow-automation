@@ -1,15 +1,13 @@
 import React from 'react';
 import { Phone, Mail, Users, Clock, AlertCircle, LinkIcon, ArrowUpDown } from 'lucide-react';
 import { type Task } from '@/services/supabaseService';
-import HubspotSyncButton from './HubspotSyncButton';
 import PriorityBadge from '@/components/shared/PriorityBadge';
 
 interface TaskItemProps {
   task: Task;
-  showSyncButton?: boolean;
 }
 
-const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
+const TaskItem: React.FC<TaskItemProps> = ({ task }) => {
   // Comprobamos que los campos de HubSpot existan, si no, los inicializamos como null
   const safeTask = {
     ...task,
@@ -37,15 +35,36 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
   };
 
   const getStatusClass = () => {
-    switch (task.status) {
-      case 'completed':
+    // Usar safeTask.hubspot_status para determinar la clase
+    switch (safeTask.hubspot_status?.toUpperCase()) {
+      case 'COMPLETED':
         return 'funnl-badge-success';
-      case 'overdue':
-        return 'funnl-badge-danger';
-      case 'pending':
-        return 'funnl-badge-warning';
+      case 'WAITING': // Podríamos darle otro color si quisiéramos
+      case 'DEFERRED': // Podríamos darle otro color
+      case 'NOT_STARTED':
+        return 'funnl-badge-warning'; // Asignar "Pendiente" visualmente
+      case 'IN_PROGRESS':
+         return 'funnl-badge-info'; // Asignar "En Progreso" visualmente
       default:
-        return 'funnl-badge-info';
+        return 'funnl-badge-secondary'; // Un color por defecto para estados desconocidos
+    }
+  };
+
+  const getStatusLabel = (hubspotStatus: string | null): string => {
+    // Mapear desde hubspot_status
+    switch (hubspotStatus?.toUpperCase()) {
+      case 'COMPLETED':
+        return 'Completado (HS)'; // Añadir (HS) para diferenciar si es necesario
+      case 'NOT_STARTED':
+        return 'Pendiente (HS)';
+      case 'IN_PROGRESS':
+          return 'En Progreso (HS)';
+      case 'WAITING':
+          return 'Esperando (HS)';
+      case 'DEFERRED':
+          return 'Aplazado (HS)';
+      default:
+        return hubspotStatus || 'Desconocido'; // Mostrar estado crudo o "Desconocido"
     }
   };
 
@@ -113,7 +132,7 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
             className="text-xs" 
           />
           <span className={`funnl-badge ${getStatusClass()}`}>
-            {task.status}
+            {getStatusLabel(safeTask.hubspot_status)}
           </span>
           
           {/* HubSpot related information */}
@@ -121,18 +140,6 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
             <span className="funnl-badge funnl-badge-dark flex items-center gap-1">
               <LinkIcon size={12} />
               {getHubspotTypeLabel()}
-            </span>
-          )}
-          
-          {/* No mostramos este indicador si estamos mostrando el botón de sync */}
-          {!showSyncButton && safeTask.sync_status && (
-            <span className={`text-xs font-medium flex items-center gap-1 ${getSyncStatusClass()}`}>
-              <ArrowUpDown size={12} />
-              {safeTask.sync_status === 'synced' 
-                ? 'Sincronizado' 
-                : safeTask.sync_status === 'pending' 
-                  ? 'Pendiente' 
-                  : 'Error'}
             </span>
           )}
         </div>
@@ -163,13 +170,6 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, showSyncButton = true }) => {
                 {formatSyncDate(safeTask.hubspot_last_synced)}
               </div>
             )}
-          </div>
-        )}
-        
-        {/* Mostrar botón de sincronización cuando sea necesario */}
-        {showSyncButton && safeTask.hubspot_id && (
-          <div className="mt-2">
-            <HubspotSyncButton task={safeTask} />
           </div>
         )}
       </div>

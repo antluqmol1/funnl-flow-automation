@@ -26,7 +26,7 @@ import { useCreateTaskMutation, useUpdateTaskMutation } from '@/hooks/useTasks';
 import { useToast } from '@/components/ui/use-toast';
 import HubspotObjectSelector from "./HubspotObjectSelector";
 import { Link } from 'react-router-dom';
-import { Plus } from 'lucide-react';
+import { Plus, Loader2 } from 'lucide-react';
 import apiClient from '@/lib/axiosClient';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { HubspotObject } from '@/types/hubspot';
@@ -99,7 +99,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
     } : {
       title: '',
       type: 'call',
-      time: new Date().toISOString().substring(0, 16), // Formato YYYY-MM-DDThh:mm
+      time: new Date().toISOString(),
       contact_id: undefined,
       status: 'pending',
       priority: 'medium',
@@ -128,6 +128,9 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       return null;
   }, [watchedHubspotId, watchedHubspotType]);
   // --- FIN NUEVO ---
+
+  // Obtener el estado de carga de la mutación relevante
+  const isSubmitting = task ? updateTaskMutation.isPending : createTaskMutation.isPending;
 
   const onSubmit = async (values: TaskFormValues) => {
     let savedTask: SupabaseTaskType | null = null;
@@ -179,49 +182,11 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
       }
       
       // --- INICIO: Llamada para sincronizar con HubSpot --- 
-      if (savedTask && savedTask.hubspot_id && savedTask.hubspot_type && isHubspotConnected === true) {
-        console.log(`[TaskForm] Intentando sincronizar Tarea ${savedTask.id} con HubSpot...`);
-        try {
-          const syncPayload = {
-            supabaseTaskId: savedTask.id,
-            hubspotObjectId: savedTask.hubspot_id, 
-            hubspotObjectType: savedTask.hubspot_type,
-            existingHubspotTaskId: savedTask.hubspot_task_id, // Enviar el ID si existe
-            taskData: {
-              title: savedTask.title,
-              status: savedTask.status,
-              priority: savedTask.priority,
-              time: savedTask.time,
-            }
-          };
-          
-          console.log("[TaskForm] Payload para /tasks/sync:", syncPayload);
-
-          const syncResponse = await apiClient.post('/api/hubspot/tasks/sync', syncPayload);
-          
-          console.log("[TaskForm] Respuesta de sincronización HubSpot:", syncResponse.data);
-
-          // Podríamos mostrar un toast secundario de éxito para el sync si quisiéramos
-          // toast({ title: "Sincronización HubSpot", description: "Tarea sincronizada." });
-
-        } catch (syncError: any) {
-          console.error("[TaskForm] Error durante la sincronización con HubSpot:", syncError);
-          // Mostrar un toast de advertencia, ya que la tarea principal se guardó
-          toast({
-            title: "Advertencia de Sincronización",
-            description: `La tarea se guardó localmente, pero falló la sincronización con HubSpot: ${syncError.response?.data?.message || syncError.message}`,
-            variant: "destructive", // Usar destructivo para que sea visible, aunque sea advertencia
-            duration: 7000, // Duración más larga
-          });
-        }
-      } else if (savedTask && savedTask.hubspot_id && isHubspotConnected !== true) {
-         console.warn(`[TaskForm] Tarea ${savedTask.id} guardada, pero no se sincroniza porque HubSpot no está conectado.`);
-         // Podríamos mostrar un toast informativo
-         toast({ title: "Información", description: "Tarea guardada localmente. Conecta HubSpot para sincronizar." });
-      }
+      // El bloque de código que llamaba a apiClient.post('/api/hubspot/tasks/sync', ...) 
+      // ha sido completamente eliminado aquí.
       // --- FIN: Llamada para sincronizar con HubSpot --- 
 
-      // Limpiar y cerrar solo después de que todo (incluido el intento de sync) haya terminado
+      // Limpiar y cerrar solo después de que todo (incluido el intento de sync desde el hook) haya terminado
       if (!task) { // Solo resetear si era una creación
          form.reset();
       }
@@ -425,8 +390,15 @@ const TaskForm: React.FC<TaskFormProps> = ({ task, onComplete }) => {
           <Button type="button" variant="ghost" onClick={onComplete}>
             Cancelar
           </Button>
-          <Button type="submit" disabled={checkingConnection || createTaskMutation.isPending || updateTaskMutation.isPending}>
-            {task ? 'Actualizar Tarea' : 'Crear Tarea'}
+          <Button type="submit" disabled={isSubmitting} className="w-full">
+            {isSubmitting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                {task ? 'Actualizando...' : 'Creando...'}
+              </>
+            ) : (
+              task ? 'Actualizar Tarea' : 'Crear Tarea'
+            )}
           </Button>
         </div>
       </form>

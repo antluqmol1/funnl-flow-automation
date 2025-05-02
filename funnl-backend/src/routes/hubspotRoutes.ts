@@ -6,6 +6,31 @@ import { verifySupabaseToken } from '../middleware/authMiddleware';
 import { getHubspotAccessTokenForUser } from '../services/hubspotTokenManager';
 import { createClient, SupabaseClient } from '@supabase/supabase-js'; // <-- Importar createClient
 import dotenv from 'dotenv'; // <-- Importar dotenv
+// <<< INICIO CORRECCIÓN IMPORTACIÓN/DEFINICIÓN TIPO >>>
+// Intentar importar desde una ruta común o definir aquí si no existe
+// import { Task as SupabaseTask } from '../types'; // Ruta tentativa
+// Definición actualizada basada en tipos generados
+interface SupabaseTask {
+    id: string;
+    title: string;
+    // Mantener tipos específicos para claridad en TS, aunque la DB sea text
+    type: 'call' | 'email' | 'meeting' | 'follow-up' | 'other';
+    time: string;                     // <-- Cambiado a NO NULO
+    contact_id: string | null;
+    status: 'pending' | 'completed' | 'overdue';
+    priority: 'high' | 'medium' | 'low';
+    created_at: string | null;
+    updated_at: string | null;
+    hubspot_id: string | null;
+    hubspot_type: 'deal' | 'ticket' | 'contact' | 'company' | null;
+    hubspot_owner: string | null;
+    hubspot_status: string | null;
+    hubspot_last_synced: string | null;
+    sync_status: 'synced' | 'pending' | 'error' | null;
+    hubspot_task_id: string | null;     // <-- Cambiado a no opcional
+    // user_id: string | null;        // <-- Eliminado
+}
+// <<< FIN CORRECCIÓN IMPORTACIÓN/DEFINICIÓN TIPO >>>
 
 dotenv.config(); // <-- Cargar variables de entorno
 
@@ -551,7 +576,6 @@ router.post('/tasks/sync', async (req: Request<{}, {}, SyncTaskRequestBody>, res
     const userAccessToken = req.hubspotAccessToken;
     const userId = req.user?.id;
 
-    // Verificar si el cliente supabase se inicializó correctamente
     if (!supabase) {
         console.error('[HubspotRoutes:/tasks/sync] Cliente Supabase no inicializado.');
         return res.status(500).json({ success: false, message: 'Error de configuración del servidor (Supabase).' });
@@ -559,17 +583,15 @@ router.post('/tasks/sync', async (req: Request<{}, {}, SyncTaskRequestBody>, res
 
     console.log(`API Recibido: POST /tasks/sync para Supabase Task ID: ${supabaseTaskId} (User: ${userId})`);
 
-    // Validación básica de entrada
     if (!supabaseTaskId || !hubspotObjectId || !hubspotObjectType || !taskData || !taskData.title) {
         return res.status(400).json({ success: false, message: "Faltan datos requeridos para la sincronización de tareas." });
     }
     if (!userAccessToken) {
-        // Aunque el middleware requireHubspotToken ya lo verifica, doble chequeo
         return res.status(403).json({ success: false, message: "Token de HubSpot no disponible." });
     }
 
     try {
-        // 1. Llamar al servicio para sincronizar con HubSpot
+        // 1. Sincronizar con HubSpot (Crear/Actualizar)
         const resultingHubspotTaskId = await hubspotService.syncTask(
             taskData,
             hubspotObjectId,
@@ -580,42 +602,78 @@ router.post('/tasks/sync', async (req: Request<{}, {}, SyncTaskRequestBody>, res
 
         console.log(`[HubspotRoutes] Tarea sincronizada con HubSpot. HS Task ID: ${resultingHubspotTaskId}`);
 
-        // 2. Actualizar la tabla 'tasks' en Supabase con el ID de HubSpot y la fecha
+        // <<< INICIO: Buscar Supabase Contact ID si aplica >>>
+        let supabaseContactId: string | null = null;
+        if (hubspotObjectType === 'contact') {
+            try {
+                console.log(`[HubspotRoutes:/tasks/sync] Buscando Supabase contact ID para HubSpot contact ${hubspotObjectId}`);
+                const { data: contactData, error: contactError } = await supabase
+                    .from('contacts')
+                    .select('id')
+                    .eq('hubspot_id', hubspotObjectId) // Buscar por el ID de HubSpot
+                    // No filtramos por user_id aquí, asumiendo que hubspot_id es único globalmente o que la FK se encargará
+                    .maybeSingle();
+
+                if (contactError) {
+                    console.error(`[HubspotRoutes:/tasks/sync] Error DB buscando Supabase contact ID:`, contactError.message);
+                    // No fallar toda la operación, solo loguear
+                } else if (contactData) {
+                    supabaseContactId = contactData.id;
+                    console.log(`[HubspotRoutes:/tasks/sync] Encontrado Supabase contact ID: ${supabaseContactId}`);
+                } else {
+                    console.log(`[HubspotRoutes:/tasks/sync] No se encontró Supabase contact para HubSpot ID ${hubspotObjectId}`);
+                }
+            } catch (dbError: any) {
+                console.error(`[HubspotRoutes:/tasks/sync] Excepción buscando Supabase contact ID:`, dbError);
+                // Continuar de todas formas
+            }
+        }
+        // <<< FIN: Buscar Supabase Contact ID >>>
+
+        // 2. Actualizar la tabla 'tasks' en Supabase con el ID de HubSpot y el contact_id
+        const updatePayload: Partial<SupabaseTask> = {
+            hubspot_task_id: resultingHubspotTaskId,
+            hubspot_last_synced: new Date().toISOString(),
+            sync_status: 'synced', // <-- CORREGIDO: Usar 'synced' en lugar de 'completed'
+            contact_id: supabaseContactId
+        };
+
+        // Eliminar contact_id si es null para no intentar insertar NULL explícitamente si la columna no lo permite
+        // (Aunque la FK debería permitir NULL si no es requerida)
+        // Mejor práctica: solo incluirlo si se encontró un valor.
+        if (supabaseContactId === null) {
+            delete updatePayload.contact_id;
+        }
+
         const { error: updateError } = await supabase
             .from('tasks')
-            .update({
-                hubspot_task_id: resultingHubspotTaskId, // Guardar el ID devuelto por HubSpot
-                hubspot_last_synced: new Date().toISOString(), // Marcar hora de sincronización
-                sync_status: 'completed' // Marcar como completada
-            })
-            .eq('id', supabaseTaskId); // Asegurarse de actualizar la tarea correcta
+            .update(updatePayload)
+            .eq('id', supabaseTaskId);
 
         if (updateError) {
             console.error(`[HubspotRoutes] Error actualizando tarea ${supabaseTaskId} en Supabase después del sync:`, updateError);
-            return res.status(500).json({
-                success: false,
-                message: `Tarea sincronizada con HubSpot (ID: ${resultingHubspotTaskId}), pero falló la actualización en la base de datos local.`,
+            // Devolver éxito parcial, ya que la sincronización con HS funcionó
+            return res.status(200).json({
+                success: true, // Indicar éxito parcial
+                message: `Tarea sincronizada con HubSpot (ID: ${resultingHubspotTaskId}), pero falló la actualización del contact_id en la base de datos local.`,
                 hubspotTaskId: resultingHubspotTaskId,
-                dbError: updateError.message
+                warning: `No se pudo actualizar contact_id: ${updateError.message}`
             });
         }
 
-        console.log(`[HubspotRoutes] Tarea ${supabaseTaskId} actualizada en Supabase con HS Task ID ${resultingHubspotTaskId}.`);
+        console.log(`[HubspotRoutes] Tarea ${supabaseTaskId} actualizada en Supabase con HS Task ID ${resultingHubspotTaskId} y Contact ID ${supabaseContactId}.`);
 
-        // 3. Devolver éxito
+        // 3. Devolver éxito total
         res.status(200).json({
             success: true,
-            message: "Tarea sincronizada con HubSpot correctamente.",
+            message: "Tarea sincronizada con HubSpot y actualizada localmente.",
             hubspotTaskId: resultingHubspotTaskId
         });
 
     } catch (error: any) {
         console.error(`[HubspotRoutes] Error en /tasks/sync para Supabase Task ID ${supabaseTaskId} (User: ${userId}):`, error.message);
-        // Marcar sync_status como 'failed' en Supabase podría ser útil aquí
-        await supabase
-            .from('tasks')
-            .update({ sync_status: 'failed', hubspot_last_synced: new Date().toISOString() })
-            .eq('id', supabaseTaskId);
+        // Marcar sync_status como 'failed' podría ser útil aquí
+        await supabase?.from('tasks').update({ sync_status: 'failed', hubspot_last_synced: new Date().toISOString() }).eq('id', supabaseTaskId);
 
         res.status(500).json({
             success: false,
@@ -889,7 +947,7 @@ router.post('/sync-all-deals', async (req: Request, res: Response) => {
                         const hubspotDealId = hsResponse.data.results[0].id;
                         // Verificar si este ID de HubSpot ya está asignado a otro deal de Supabase
                         if (existingSupabaseDeals.has(hubspotDealId)) {
-                            const errorMsg = `[Sync All Deals] Conflicto: Deal de HubSpot ${hubspotDealId} ("${deal.title}") ya está vinculado al deal de Supabase ${existingSupabaseDeals.get(hubspotDealId)}. No se vinculará a ${deal.id}.`;
+                            const errorMsg = `[Sync All Deals] Conflicto: Deal de HubSpot ${hubspotDealId} ("${deal.title}") ya está vinculado al deal de Supabase ${existingSupabaseDeals.get(hubspotDealId)}. No se vincula automáticamente.`;
                             console.warn(errorMsg);
                             errors.push(errorMsg);
                         } else {
@@ -1047,5 +1105,315 @@ router.post('/sync-all-deals', async (req: Request, res: Response) => {
     }
 });
 
-// Exportar el router para que pueda ser usado en server.ts
-export default router; 
+// Interfaz local para Supabase Task (Ajustar a tu estructura real)
+interface LocalSupabaseTask extends SupabaseTask {
+    user_id?: string;
+    // Añadir otros campos necesarios para comparación
+    hubspot_status: string | null; // Asegurar que coincida con SupabaseTask
+}
+
+// --- RUTA MODIFICADA: Sincronización Completa de Tareas (HubSpot -> Supabase) ---
+router.post('/sync-all-tasks', async (req: Request, res: Response) => {
+    const userId = req.user?.id;
+    const userAccessToken = req.hubspotAccessToken;
+
+    console.log(`[HubspotRoutes] Iniciando /sync-all-tasks para User ID: ${userId}`);
+
+    if (!userId || !userAccessToken) {
+        return res.status(401).json({ success: false, message: "Autenticación o token de HubSpot faltante." });
+    }
+    if (!supabase) {
+        console.error('[HubspotRoutes:/sync-all-tasks] Cliente Supabase no inicializado.');
+        return res.status(500).json({ success: false, message: 'Error de configuración del servidor (Supabase).' });
+    }
+
+    let importedTasks = 0;
+    let updatedTasks = 0;
+    const errors: string[] = [];
+    const supabaseTaskMap = new Map<string, LocalSupabaseTask>();
+
+    // --- Funciones Auxiliares Internas ---
+    const mapHubspotStatusToLocal = (hsStatus: string | null | undefined): 'pending' | 'completed' => {
+        if (hsStatus === 'COMPLETED') return 'completed';
+        return 'pending';
+    };
+    const mapHubspotPriorityToLocal = (hsPriority: string | null | undefined): 'low' | 'medium' | 'high' => {
+        switch (hsPriority?.toUpperCase()) {
+            case 'LOW': return 'low';
+            case 'HIGH': return 'high';
+            case 'MEDIUM': default: return 'medium';
+        }
+    };
+    const formatHubspotTimestamp = (hsTimestamp: string | number | null | undefined): string | null => {
+        if (!hsTimestamp) return null;
+        try {
+            // Si ya es un string, asumimos que es ISO y lo validamos/devolvemos.
+            if (typeof hsTimestamp === 'string') {
+                // Intenta crear una fecha para validar el formato ISO
+                if (!isNaN(new Date(hsTimestamp).getTime())) {
+                    return hsTimestamp; // Ya es un ISO válido, devolverlo directamente
+                } else {
+                    console.warn(`[formatHubspotTimestamp] Received invalid date string: ${hsTimestamp}`);
+                    return null; // Formato de string inválido
+                }
+            }
+            // Si es un número, asumimos que son milisegundos y lo convertimos a ISO.
+            else if (typeof hsTimestamp === 'number') {
+                if (isNaN(hsTimestamp)) return null;
+                return new Date(hsTimestamp).toISOString();
+            }
+            return null; // Tipo no esperado
+        } catch (e) {
+            console.error(`[formatHubspotTimestamp] Error processing timestamp ${hsTimestamp}:`, e);
+            return null;
+        }
+    };
+    const extractPrimaryAssociation = (associations: any): { id: string | null; type: 'contact' | 'deal' | 'company' | 'ticket' | null } => {
+        if (!associations) return { id: null, type: null };
+        if (associations.contacts?.results?.length > 0) return { id: associations.contacts.results[0].id, type: 'contact' };
+        if (associations.deals?.results?.length > 0) return { id: associations.deals.results[0].id, type: 'deal' };
+        if (associations.companies?.results?.length > 0) return { id: associations.companies.results[0].id, type: 'company' };
+        if (associations.tickets?.results?.length > 0) return { id: associations.tickets.results[0].id, type: 'ticket' };
+        return { id: null, type: null };
+    };
+    // Nueva función para mapear tipo
+    const mapHubspotTaskTypeToLocal = (hsType: string | null | undefined): 'call' | 'email' | 'meeting' | 'follow-up' | 'other' => {
+        switch (hsType?.toUpperCase()) {
+            case 'CALL': return 'call';
+            case 'EMAIL': return 'email';
+            case 'MEETING': return 'meeting';
+            case 'TODO': return 'other'; // HubSpot usa 'TODO' para tareas generales
+            default: return 'other';
+        }
+    };
+    // --- Fin Funciones Auxiliares Internas ---
+
+    try {
+        // 1. Obtener datos COMPLETOS de tareas existentes de Supabase
+        console.log(`[Sync All Tasks] Obteniendo datos completos de tareas Supabase...`); // No filtrar por UserID
+        const { data: supabaseTasksData, error: sbError } = await supabase
+            .from('tasks')
+            .select('id, hubspot_task_id, title, status, priority, time, hubspot_owner, hubspot_id, hubspot_type, hubspot_status')
+        // .eq('user_id', userId); // <-- Eliminado filtro user_id
+
+        if (sbError) {
+            console.error(`[Sync All Tasks] Error obteniendo tareas completas de Supabase:`, sbError);
+            throw new Error(`Error al obtener tareas locales: ${sbError.message}`);
+        }
+
+        if (supabaseTasksData) {
+            console.log(`[Sync All Tasks] ${supabaseTasksData.length} tareas completas encontradas en Supabase.`);
+            supabaseTasksData.forEach((t: any) => {
+                if (t.hubspot_task_id) {
+                    supabaseTaskMap.set(t.hubspot_task_id, t as LocalSupabaseTask);
+                }
+            });
+        }
+
+        // 2. Obtener todas las tareas desde HubSpot
+        console.log(`[Sync All Tasks] Obteniendo tareas desde HubSpot...`);
+        const hubspotTasks = await hubspotService.getAllTasks(userAccessToken);
+        console.log(`[Sync All Tasks] ${hubspotTasks.length} tareas obtenidas de HubSpot.`);
+
+        // 3. Iterar, comparar e importar/actualizar
+        for (const hsTask of hubspotTasks) {
+            // <<< INICIO LOG ASOCIACIONES >>>
+            console.log(`[Sync All Tasks] Procesando HS Task ID: ${hsTask.id}. Estructura recibida (incl. associations):`, JSON.stringify(hsTask, null, 2));
+            // <<< FIN LOG ASOCIACIONES >>>
+
+            const hubspotTaskId = hsTask.id;
+            const hsProperties = hsTask.properties;
+            const existingSupabaseTask = supabaseTaskMap.get(hubspotTaskId);
+
+            const association = extractPrimaryAssociation(hsTask.associations);
+            const mappedHsData = {
+                title: hsProperties.hs_task_subject || 'Tarea sin título',
+                status: mapHubspotStatusToLocal(hsProperties.hs_task_status),
+                priority: mapHubspotPriorityToLocal(hsProperties.hs_task_priority),
+                time: formatHubspotTimestamp(hsProperties.hs_timestamp),
+                hubspot_owner: hsProperties.hubspot_owner_id || null,
+                hubspot_id: association.id,
+                hubspot_type: association.type,
+                hubspot_status_raw: hsProperties.hs_task_status || null,
+                type: mapHubspotTaskTypeToLocal(hsProperties.hs_task_type),
+                hs_createdate: hsProperties.hs_createdate
+            };
+
+            // <<< INICIO BÚSQUEDA contact_id >>>
+            let supabaseContactId: string | null = null;
+            if (mappedHsData.hubspot_type === 'contact' && mappedHsData.hubspot_id) {
+                try {
+                    // Buscar el ID de Supabase del contacto usando solo el hubspot_id
+                    console.log(`[Sync All Tasks] Buscando Supabase contact ID para HubSpot contact ${mappedHsData.hubspot_id}`);
+                    const { data: contactData, error: contactError } = await supabase
+                        .from('contacts')
+                        .select('id')
+                        .eq('hubspot_id', mappedHsData.hubspot_id)
+                        // .eq('user_id', userId) // <-- REVERTIDO: Quitar filtro user_id
+                        .maybeSingle();
+
+                    if (contactError) {
+                        console.error(`[Sync All Tasks] Error DB buscando Supabase contact ID:`, contactError.message);
+                        // No fallar toda la operación, solo loguear
+                    } else if (contactData) {
+                        supabaseContactId = contactData.id;
+                        console.log(`[Sync All Tasks] Mapeado HubSpot contact ${mappedHsData.hubspot_id} a Supabase contact_id ${supabaseContactId}`);
+                    } else {
+                        console.log(`[Sync All Tasks] No se encontró Supabase contact para HubSpot ID ${mappedHsData.hubspot_id}`);
+                    }
+                } catch (dbError: any) {
+                    console.error(`[Sync All Tasks] Excepción buscando Supabase contact ID:`, dbError);
+                    // Continuar de todas formas
+                }
+            }
+            // <<< FIN BÚSQUEDA contact_id >>>
+
+            if (existingSupabaseTask) {
+                // --- Lógica de Actualización ---
+                const updates: Partial<LocalSupabaseTask> = {};
+                let changed = false;
+
+                // Determinar el valor de 'time' para Supabase
+                // Prioridad: hs_timestamp (vía mappedHsData.time), luego hs_createdate, luego epoch
+                // Ahora mappedHsData.time debería ser el ISO correcto si hs_timestamp existe y es válido.
+                const timeForSupabase = mappedHsData.time ?? mappedHsData.hs_createdate ?? new Date(0).toISOString();
+                // Usamos '??' (nullish coalescing) para priorizar time incluso si es una string vacía (aunque no debería serlo)
+                // y solo usar hs_createdate si time es null o undefined.
+
+                // <<< INICIO: Comparación de Tiempo Robusta >>>
+                const existingTime = existingSupabaseTask.time; // ISO string de Supabase
+                let timeChanged = false;
+
+                // <<< NUEVO LOG >>>
+                console.log(`[Sync All Tasks] Valores ANTES de new Date() para Tarea ${existingSupabaseTask.id}: timeForSupabase='${timeForSupabase}', existingTime='${existingTime}'`);
+
+                try {
+                    // Convertir ambos a timestamps numéricos para comparar
+                    const timeForSupabaseMs = new Date(timeForSupabase).getTime();
+                    const existingTimeMs = new Date(existingTime).getTime();
+
+                    // Log para depuración
+                    console.log(`[Sync All Tasks] Comparando Tiempos para Tarea ${existingSupabaseTask.id}:
+                       - HubSpot (convertido): ${timeForSupabase} (${timeForSupabaseMs}ms)
+                       - Supabase (existente): ${existingTime} (${existingTimeMs}ms)`);
+
+                    // Comparar solo si ambos son números válidos
+                    if (!isNaN(timeForSupabaseMs) && !isNaN(existingTimeMs)) {
+                        if (timeForSupabaseMs !== existingTimeMs) {
+                            timeChanged = true;
+                        }
+                    } else if (timeForSupabase !== existingTime) {
+                        // Fallback a comparación de string si uno o ambos no son fechas válidas
+                        // (esto puede ocurrir si uno es epoch y el otro no, etc.)
+                        console.log(`[Sync All Tasks] Comparando tiempos como strings (fallback)`);
+                        timeChanged = true;
+                    }
+                } catch (e) {
+                    console.error(`[Sync All Tasks] Error comparando fechas para tarea ${existingSupabaseTask.id}, asumiendo cambio.`, e);
+                    // Si hay error al comparar, asumir que cambió para estar seguros
+                    timeChanged = true;
+                }
+
+                if (timeChanged) {
+                    updates.time = timeForSupabase;
+                    changed = true;
+                    console.log(`[Sync All Tasks] -> Detectado cambio en el tiempo.`);
+                }
+                // <<< FIN: Comparación de Tiempo Robusta >>>
+
+                if (mappedHsData.title !== existingSupabaseTask.title) { updates.title = mappedHsData.title; changed = true; console.log(`[Sync All Tasks] -> Cambio en title`); }
+                if (mappedHsData.status !== existingSupabaseTask.status) { updates.status = mappedHsData.status; changed = true; console.log(`[Sync All Tasks] -> Cambio en status`); }
+                if (mappedHsData.priority !== existingSupabaseTask.priority) { updates.priority = mappedHsData.priority; changed = true; console.log(`[Sync All Tasks] -> Cambio en priority`); }
+                if (mappedHsData.type !== existingSupabaseTask.type) { updates.type = mappedHsData.type; changed = true; console.log(`[Sync All Tasks] -> Cambio en type`); }
+                if (mappedHsData.hubspot_owner !== existingSupabaseTask.hubspot_owner) { updates.hubspot_owner = mappedHsData.hubspot_owner; changed = true; console.log(`[Sync All Tasks] -> Cambio en hubspot_owner`); }
+                if (mappedHsData.hubspot_id !== existingSupabaseTask.hubspot_id) { updates.hubspot_id = mappedHsData.hubspot_id; changed = true; console.log(`[Sync All Tasks] -> Cambio en hubspot_id`); }
+                if (mappedHsData.hubspot_type !== existingSupabaseTask.hubspot_type) { updates.hubspot_type = mappedHsData.hubspot_type; changed = true; console.log(`[Sync All Tasks] -> Cambio en hubspot_type`); }
+                if (mappedHsData.hubspot_status_raw !== existingSupabaseTask.hubspot_status) { updates.hubspot_status = mappedHsData.hubspot_status_raw; changed = true; console.log(`[Sync All Tasks] -> Cambio en hubspot_status`); }
+                if (supabaseContactId !== existingSupabaseTask.contact_id) { updates.contact_id = supabaseContactId; changed = true; console.log(`[Sync All Tasks] -> Cambio en contact_id`); }
+
+                if (changed) {
+                    updates.hubspot_last_synced = new Date().toISOString();
+                    updates.sync_status = 'synced';
+                    console.log(`[Sync All Tasks] Actualizando tarea Supabase ID ${existingSupabaseTask.id} (HS Task ID: ${hubspotTaskId}) con:`, updates);
+                    try {
+                        const { error: updateError } = await supabase.from('tasks').update(updates).eq('id', existingSupabaseTask.id);
+                        if (updateError) throw updateError;
+                        updatedTasks++;
+                    } catch (updateError: any) {
+                        const errorMsg = `Error actualizando tarea Supabase ${existingSupabaseTask.id} desde HS ${hubspotTaskId}: ${updateError.message}`;
+                        console.error(errorMsg);
+                        errors.push(errorMsg);
+                    }
+                }
+                // --- Fin Lógica de Actualización ---
+            } else {
+                // --- Lógica de Inserción (Tarea Nueva) ---
+                // Determinar el valor de 'time' para Supabase
+                const timeForSupabase = mappedHsData.time ||
+                    mappedHsData.hs_createdate ||
+                    new Date(0).toISOString();
+
+                const newTaskData = {
+                    title: mappedHsData.title,
+                    type: mappedHsData.type,
+                    time: timeForSupabase, // <-- Usar el valor calculado con fallback
+                    contact_id: supabaseContactId,
+                    status: mappedHsData.status,
+                    priority: mappedHsData.priority,
+                    hubspot_task_id: hubspotTaskId,
+                    hubspot_id: mappedHsData.hubspot_id,
+                    hubspot_type: mappedHsData.hubspot_type,
+                    hubspot_owner: mappedHsData.hubspot_owner,
+                    hubspot_status: mappedHsData.hubspot_status_raw,
+                    hubspot_last_synced: new Date().toISOString(),
+                    sync_status: 'synced'
+                };
+                try {
+                    const { error: insertError } = await supabase.from('tasks').insert(newTaskData);
+                    if (insertError) throw insertError;
+                    console.log(`[Sync All Tasks] Importada nueva tarea desde HubSpot: "${newTaskData.title}" (HS Task ID: ${hubspotTaskId})`);
+                    importedTasks++;
+                } catch (insertError: any) {
+                    const errorMsg = `Error insertando tarea importada ${hubspotTaskId} ("${newTaskData.title}"): ${insertError.message}`;
+                    console.error(errorMsg);
+                    if (insertError.code === '23505') {
+                        console.warn(`[Sync All Tasks] La tarea ${hubspotTaskId} parece haber sido creada concurrentemente. Saltando.`);
+                    } else {
+                        errors.push(errorMsg);
+                    }
+                }
+                // --- Fin Lógica de Inserción ---
+            }
+        } // Fin del bucle
+
+        console.log(`[Sync All Tasks] Sincronización completada para User ID: ${userId}. Importadas: ${importedTasks}, Actualizadas: ${updatedTasks}. Errores: ${errors.length}`);
+
+        res.status(200).json({
+            success: true,
+            message: `Sincronización de tareas completada.`,
+            details: {
+                imported_tasks: importedTasks,
+                updated_tasks: updatedTasks,
+                errors: errors
+            }
+        });
+
+    } catch (error: any) {
+        console.error(`[Sync All Tasks] Error general durante la sincronización para User ID ${userId}:`, error);
+        res.status(500).json({
+            success: false,
+            message: "Error interno durante la sincronización completa de tareas.",
+            error: error.message,
+            details: {
+                imported_tasks: importedTasks,
+                updated_tasks: updatedTasks,
+                errors: errors.length > 0 ? errors : [error.message]
+            }
+        });
+    }
+});
+// --- Fin Ruta Modificada ---
+
+// Exportar el router con tipo explícito
+const hubspotRouter: Router = router;
+export default hubspotRouter; 

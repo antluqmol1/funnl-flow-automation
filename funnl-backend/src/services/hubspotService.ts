@@ -3,6 +3,7 @@ import axios from 'axios'; // <-- Importar axios
 // Importaremos más tipos específicos de HubSpot a medida que los necesitemos
 import { SimplePublicObjectInput } from '@hubspot/api-client/lib/codegen/crm/contacts'; // Ejemplo para crear contacto
 import { PublicObjectSearchRequest } from '@hubspot/api-client/lib/codegen/crm/contacts'; // Para la búsqueda
+import { CollectionResponseSimplePublicObjectWithAssociationsForwardPaging } from '@hubspot/api-client/lib/codegen/crm/objects/tasks'; // <-- Usar tipo sin 'WithTotal'
 
 // (Opcional pero recomendado) Definir interfaces para las propiedades que usarán tus métodos
 interface ContactProperties {
@@ -729,14 +730,18 @@ export class HubSpotService {
      * @private
      */
     private _mapTaskStatus(localStatus: 'pending' | 'completed' | 'overdue'): 'NOT_STARTED' | 'COMPLETED' | 'WAITING' | 'IN_PROGRESS' | 'DEFERRED' {
+        // Mapeo lógico de estados locales a estados de HubSpot
         switch (localStatus) {
             case 'completed':
                 return 'COMPLETED';
             case 'pending':
-            case 'overdue':
+            case 'overdue': // Tratar 'overdue' como 'NOT_STARTED' ya que no hay estado directo en HS
             default:
-                // Podríamos mapear 'overdue' a 'WAITING' o 'DEFERRED' si tuviera sentido
                 return 'NOT_STARTED';
+            // Podrías añadir lógica para otros estados de HubSpot si tu app los maneja
+            // case 'in_progress': return 'IN_PROGRESS';
+            // case 'waiting': return 'WAITING';
+            // case 'deferred': return 'DEFERRED';
         }
     }
 
@@ -747,7 +752,16 @@ export class HubSpotService {
      * @private
      */
     private _mapTaskPriority(localPriority: 'low' | 'medium' | 'high'): 'LOW' | 'MEDIUM' | 'HIGH' {
-        return localPriority.toUpperCase() as 'LOW' | 'MEDIUM' | 'HIGH';
+        // Mapeo de prioridades locales a prioridades de HubSpot
+        switch (localPriority) {
+            case 'low':
+                return 'LOW';
+            case 'high':
+                return 'HIGH';
+            case 'medium':
+            default:
+                return 'MEDIUM';
+        }
     }
 
     /**
@@ -758,14 +772,15 @@ export class HubSpotService {
      */
     private _getHubspotTimestamp(dateTimeString: string): number | null {
         try {
-            // Intentar parsear la fecha. Date.parse devuelve NaN si no es válido.
-            const timestamp = Date.parse(dateTimeString);
-            if (isNaN(timestamp)) {
-                console.warn(`[HubSpotService] Fecha/hora inválida para timestamp: ${dateTimeString}`);
+            // Interpretar el string YYYY-MM-DDTHH:mm como hora local del servidor
+            // y obtener el timestamp UTC en milisegundos.
+            const date = new Date(dateTimeString);
+            if (isNaN(date.getTime())) {
+                console.warn(`[HubSpotService] Fecha/hora inválida proporcionada a _getHubspotTimestamp: ${dateTimeString}`);
                 return null;
             }
             // HubSpot espera timestamp en milisegundos UTC
-            return timestamp;
+            return date.getTime();
         } catch (e) {
             console.error(`[HubSpotService] Error convirtiendo fecha a timestamp: ${dateTimeString}`, e);
             return null;
@@ -826,13 +841,8 @@ export class HubSpotService {
     }
 
     /**
-     * Sincroniza (crea o actualiza) una tarea en HubSpot y la asocia al objeto especificado.
-     * @param taskData Datos de la tarea desde nuestra aplicación.
-     * @param hubspotObjectId ID del objeto HubSpot al que asociar la tarea (Contacto, Deal, etc.).
-     * @param hubspotObjectType Tipo del objeto HubSpot al que asociar ('contact', 'deal', 'company', 'ticket').
-     * @param userAccessToken Token de acceso del usuario.
-     * @param existingHubspotTaskId (Opcional) ID de la tarea en HubSpot si ya existe.
-     * @returns Promise con el ID de la tarea en HubSpot (creada o actualizada).
+     * Sincroniza (crea o actualiza) una tarea local con HubSpot.
+     * Mapea estado y prioridad locales a los valores de HubSpot.
      */
     async syncTask(
         taskData: { title: string; status: 'pending' | 'completed' | 'overdue'; priority: 'low' | 'medium' | 'high'; time: string },
@@ -841,81 +851,89 @@ export class HubSpotService {
         userAccessToken: string,
         existingHubspotTaskId?: string | null
     ): Promise<string> {
-        console.log(`[HubSpotService] Iniciando syncTask para '${taskData.title}'. Objeto: ${hubspotObjectType} ${hubspotObjectId}. Tarea HS existente: ${existingHubspotTaskId}`);
+        console.log(`Servicio HubSpot: Sincronizando tarea "${taskData.title}" con ${hubspotObjectType} ID ${hubspotObjectId}`);
         if (!userAccessToken) throw new Error("userAccessToken es requerido para syncTask");
-        if (!hubspotObjectId || !hubspotObjectType) throw new Error("HubSpot Object ID y Type son requeridos para asociar la tarea");
-
         const userClient = new Client({ accessToken: userAccessToken });
 
-        // 1. Mapear propiedades - CORRECCIÓN: hs_timestamp debe ser string
-        const properties: { [key: string]: string } = { // Asegurar que el tipo sea string:string
+        // Preparar propiedades comunes mapeando estado y prioridad
+        const taskProperties: { [key: string]: string | number | undefined } = {
             hs_task_subject: taskData.title,
-            hs_task_status: this._mapTaskStatus(taskData.status),
-            hs_task_priority: this._mapTaskPriority(taskData.priority),
+            hs_task_status: this._mapTaskStatus(taskData.status), // <-- Usar mapeo
+            hs_task_priority: this._mapTaskPriority(taskData.priority), // <-- Usar mapeo
+            hs_timestamp: this._getHubspotTimestamp(taskData.time)?.toString() // Convertir a string si no es null
+            // hs_task_body: taskData.details || '', // Añadir si tienes detalles/cuerpo
+            // hubspot_owner_id: taskData.ownerId || undefined // Añadir si manejas owner
         };
 
-        const timestamp = this._getHubspotTimestamp(taskData.time);
-        if (timestamp) {
-            properties.hs_timestamp = String(timestamp); // Convertir a string
-        } else {
-            properties.hs_task_body = `Programado para: ${taskData.time}`;
-        }
-
-        let hubspotTaskId = existingHubspotTaskId;
+        // Eliminar propiedades undefined para evitar errores con la API
+        Object.keys(taskProperties).forEach(key => taskProperties[key] === undefined && delete taskProperties[key]);
 
         try {
-            // 2. Intentar Actualizar si existe ID
-            if (hubspotTaskId) {
-                console.log(`[HubSpotService] Intentando actualizar Tarea HS ${hubspotTaskId}`);
-                // CORRECCIÓN: Asegurar que el payload coincida con SimplePublicObjectInput (properties string:string)
-                const updatePayload: SimplePublicObjectInput = { properties };
+            let hubspotTaskId: string;
+
+            if (existingHubspotTaskId) {
+                // --- Actualizar Tarea Existente ---
+                console.log(`Actualizando tarea existente en HubSpot ID: ${existingHubspotTaskId}`);
+                const simplePublicObjectInput: SimplePublicObjectInput = { properties: taskProperties as { [key: string]: string } };
+
                 try {
-                    await userClient.crm.objects.tasks.basicApi.update(hubspotTaskId, updatePayload);
-                    console.log(`[HubSpotService] Tarea HS ${hubspotTaskId} actualizada.`);
-                } catch (e: any) {
-                    // ... (manejo de 404 igual) ...
-                    if (e.response?.statusCode === 404) {
-                        console.log(`[HubSpotService] Tarea HS ${hubspotTaskId} no encontrada, se creará una nueva.`);
-                        hubspotTaskId = null; // Forzar creación
+                    // Corrección: Usar la API genérica de objetos especificando 'tasks'
+                    const updateResponse = await userClient.crm.objects.basicApi.update(
+                        'tasks', // <--- Especificar tipo de objeto
+                        existingHubspotTaskId,
+                        simplePublicObjectInput
+                    );
+                    hubspotTaskId = updateResponse.id;
+                    console.log(`Tarea HubSpot ID: ${hubspotTaskId} actualizada.`);
+                } catch (updateError: any) {
+                    if (updateError.response?.statusCode === 404) {
+                        console.warn(`Tarea HS ${existingHubspotTaskId} no encontrada para actualizar. Se procederá a crear una nueva.`);
+                        existingHubspotTaskId = null; // Limpiar el ID para forzar la creación
                     } else {
-                        const statusCode = e.response?.statusCode || 'UNKNOWN';
-                        const responseBody = e.response?.body || e.message;
-                        console.error(`[HubSpotService] Error actualizando Tarea HS ${hubspotTaskId} (Status ${statusCode}):`, responseBody);
-                        throw new Error(`Error API HubSpot (${statusCode}) actualizando tarea: ${responseBody?.message || JSON.stringify(responseBody)}`);
+                        console.error("Error al actualizar tarea en HubSpot:", updateError.response?.body || updateError.message);
+                        throw updateError; // Relanzar otros errores
                     }
                 }
             }
 
-            // 3. Crear si no había ID o la actualización falló con 404
-            if (!hubspotTaskId) {
-                console.log(`[HubSpotService] Creando nueva tarea HS para '${taskData.title}'`);
-                // CORRECCIÓN: Usar SimplePublicObjectInput y extenderlo para incluir associations
-                const createPayload: SimplePublicObjectInput & { associations?: any[] } = {
-                    properties,
-                    associations: [] // Requerido por la API de creación
+            // Si no había ID existente o la actualización falló con 404, crear nueva tarea
+            if (!existingHubspotTaskId) {
+                // --- Crear Nueva Tarea ---
+                console.log("Creando nueva tarea en HubSpot...");
+                const createPayload = {
+                    properties: taskProperties as { [key: string]: string },
+                    associations: [] // Requerido por SimplePublicObjectInputForCreate
                 };
-                const createResponse = await userClient.crm.objects.tasks.basicApi.create(createPayload as any); // Usar 'as any' temporalmente si TS se queja de 'associations'
+                // Corrección: Usar la API genérica de objetos especificando 'tasks'
+                const createResponse = await userClient.crm.objects.basicApi.create(
+                    'tasks', // <--- Especificar tipo de objeto
+                    createPayload
+                );
                 hubspotTaskId = createResponse.id;
-                console.log(`[HubSpotService] Nueva tarea HS creada con ID: ${hubspotTaskId}`);
-            }
+                console.log(`Nueva tarea creada en HubSpot ID: ${hubspotTaskId}. Asociando...`);
 
-            // 4. Asociar la tarea (recién creada o la existente) con el objeto principal
-            if (hubspotTaskId) {
+                // Asociar la tarea recién creada al objeto principal
                 await this._associateTaskToObject(hubspotTaskId, hubspotObjectType, hubspotObjectId, userAccessToken);
+                console.log(`Tarea ${hubspotTaskId} asociada a ${hubspotObjectType} ${hubspotObjectId}.`);
             } else {
-                // Esto no debería pasar si la creación fue exitosa, pero por si acaso
-                console.error("[HubSpotService] No se obtuvo un hubspotTaskId después de crear/actualizar.");
-                throw new Error("No se pudo obtener el ID de la tarea de HubSpot después de la operación.");
+                // Si actualizamos con éxito, usamos el ID existente
+                hubspotTaskId = existingHubspotTaskId;
             }
 
-            // 5. Devolver el ID de HubSpot de la tarea
-            return hubspotTaskId;
+            return hubspotTaskId; // Devolver el ID de la tarea en HubSpot
 
         } catch (e: any) {
-            // Capturar errores de creación/actualización/asociación
-            console.error(`[HubSpotService] Error durante syncTask para '${taskData.title}':`, e.message);
-            // Propagar el error para que la ruta lo maneje
-            throw e;
+            // Corrección Linter: Asegurar que el error se relanza siempre
+            if (e.response) {
+                console.error("Error sincronizando tarea con HubSpot (API):", e.response.body);
+                // Construir un nuevo error para relanzar
+                throw new Error(`Error API HubSpot (${e.response.statusCode}) sincronizando tarea: ${e.response.body?.message || e.message}`);
+            } else {
+                console.error("Error inesperado sincronizando tarea con HubSpot:", e.message);
+                // Relanzar el error original o uno nuevo
+                throw new Error(`Error inesperado sincronizando tarea: ${e.message}`);
+            }
+            // No añadir un return aquí, el throw maneja el flujo
         }
     }
 
@@ -956,7 +974,132 @@ export class HubSpotService {
         }
     }
 
-} // Fin de la clase HubSpotService
+    /**
+     * Obtiene todas las tareas asociadas a un usuario desde HubSpot usando la API v1 Engagements.
+     * Maneja paginación y transforma la respuesta para simular la estructura v3.
+     * @param userAccessToken Token de acceso del usuario.
+     * @param propertiesToFetch (Ignorado por API v1, devuelve un conjunto fijo) Array de propiedades a solicitar para cada tarea.
+     * @returns Promise con un array de todas las tareas encontradas, transformadas.
+     */
+    async getAllTasks(
+        userAccessToken: string,
+        propertiesToFetch: string[] = [] // Parámetro mantenido por compatibilidad, pero ignorado
+    ): Promise<any[]> {
+        console.log(`[HubSpotService] Obteniendo todas las tareas vía Engagements API v1...`);
+        if (!userAccessToken) throw new Error("userAccessToken es requerido para getAllTasks");
 
+        const allTasksTransformed: any[] = [];
+        let offset: number | undefined = undefined;
+        const limit = 100; // La API v1 permite hasta 250, pero 100 es seguro
+        let hasMore = true;
+
+        const engagementApiUrl = "https://api.hubapi.com/engagements/v1/engagements/paged";
+
+        try {
+            while (hasMore) {
+                const params: { limit: number; offset?: number } = { limit };
+                if (offset) {
+                    params.offset = offset;
+                }
+
+                console.log(`[HubSpotService] Fetching engagements page with offset: ${offset || 0}`);
+                let apiResponse: any;
+                try {
+                    // Usar axios para llamar a la API v1
+                    const response = await axios.get(engagementApiUrl, {
+                        headers: {
+                            'Authorization': `Bearer ${userAccessToken}`,
+                            'Accept': 'application/json'
+                        },
+                        params: params
+                    });
+                    apiResponse = response.data;
+                } catch (fetchError: any) {
+                    console.error(`[HubSpotService] Error fetching engagements page:`, fetchError.response?.data || fetchError.message);
+                    throw new Error(`Error API HubSpot v1 obteniendo página de engagements: ${fetchError.response?.data?.message || fetchError.message}`);
+                }
+
+                if (apiResponse.results?.length > 0) {
+                    const taskEngagements = apiResponse.results.filter((result: any) =>
+                        result.engagement?.type === 'TASK' || result.engagement?.type === 'TODO'
+                    );
+                    console.log(`[HubSpotService] Filtrado: ${taskEngagements.length} engagements de tipo TASK/TODO encontrados en esta página.`);
+
+                    const transformedResults = taskEngagements.map((result: any) => {
+                        // <<< INICIO LOG ESTRUCTURA ORIGINAL V1 >>>
+                        console.log(`[HubSpotService] RAW Engagement V1 Data (ID: ${result.engagement?.id}):`, JSON.stringify(result, null, 2));
+                        // <<< FIN LOG ESTRUCTURA ORIGINAL V1 >>>
+
+                        const engagement = result.engagement;
+                        const associationsV1 = result.associations;
+                        const metadata = result.metadata;
+
+                        // Convertir hs_createdate a ISO string (fallback primario)
+                        const hs_createdate_iso = engagement.createdAt ? new Date(engagement.createdAt).toISOString() : new Date(0).toISOString(); // Usar epoch si falta createdAt
+
+                        // Convertir hs_timestamp (ms) a ISO string, manejar null/undefined
+                        let hs_timestamp_iso: string | null = null;
+                        if (engagement.timestamp && !isNaN(Number(engagement.timestamp))) {
+                            try {
+                                hs_timestamp_iso = new Date(Number(engagement.timestamp)).toISOString();
+                            } catch (e) {
+                                console.warn(`[HubSpotService] Error convirtiendo engagement.timestamp ${engagement.timestamp} a Date:`, e);
+                                hs_timestamp_iso = null; // Fallback a null si hay error
+                            }
+                        } else if (engagement.timestamp) {
+                            console.warn(`[HubSpotService] engagement.timestamp ${engagement.timestamp} no es un número válido.`);
+                        }
+
+                        // Mapear propiedades v1 a la estructura v3
+                        const propertiesV3 = {
+                            hs_createdate: hs_createdate_iso,
+                            hs_lastmodifieddate: engagement.lastUpdated ? new Date(engagement.lastUpdated).toISOString() : null,
+                            hs_object_id: engagement.id?.toString(),
+                            hs_task_body: metadata?.body || engagement.bodyPreview || null,
+                            hs_task_priority: metadata?.priority || 'NONE',
+                            hs_task_status: metadata?.status || 'NOT_STARTED',
+                            hs_task_subject: metadata?.subject || 'Tarea sin título',
+                            hs_task_type: engagement.type || 'TODO',
+                            hs_timestamp: hs_timestamp_iso, // Usar el ISO string convertido (puede ser null)
+                            hubspot_owner_id: engagement.ownerId?.toString() || null
+                        };
+
+                        const associationsV3 = {
+                            contacts: { results: (associationsV1?.contactIds || []).map((id: number) => ({ id: id.toString() })) },
+                            companies: { results: (associationsV1?.companyIds || []).map((id: number) => ({ id: id.toString() })) },
+                            deals: { results: (associationsV1?.dealIds || []).map((id: number) => ({ id: id.toString() })) },
+                            tickets: { results: (associationsV1?.ticketIds || []).map((id: number) => ({ id: id.toString() })) }
+                        };
+
+                        return {
+                            id: engagement.id?.toString(),
+                            properties: propertiesV3,
+                            associations: associationsV3,
+                            createdAt: engagement.createdAt ? new Date(engagement.createdAt).toISOString() : null,
+                            updatedAt: engagement.lastUpdated ? new Date(engagement.lastUpdated).toISOString() : null,
+                            archived: engagement.active === false
+                        };
+                    });
+                    allTasksTransformed.push(...transformedResults);
+                }
+
+                // Actualizar para la siguiente página
+                hasMore = apiResponse.hasMore;
+                offset = apiResponse.offset;
+
+            } // Fin while(hasMore)
+
+            console.log(`[HubSpotService] Total de ${allTasksTransformed.length} tareas obtenidas y transformadas desde Engagements API v1.`);
+            return allTasksTransformed;
+
+        } catch (e: any) {
+            // Asegurarse de que el error se propaga correctamente
+            const message = e.message.includes('obteniendo página de engagements') ? e.message : `[HubSpotService] Error general obteniendo tareas (Engagements API v1): ${e.message}`;
+            console.error(message);
+            throw new Error(message);
+        }
+    }
+
+} // Fin de la clase HubSpotService
 // Exportar una instancia singleton si prefieres ese patrón, o simplemente la clase
 // export const hubspotService = new HubSpotService(); 

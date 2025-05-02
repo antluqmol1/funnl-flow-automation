@@ -1,5 +1,5 @@
 import React from 'react';
-import { User, Settings, LogOut } from 'lucide-react';
+import { User, Settings, LogOut, RefreshCw, RefreshCcw } from 'lucide-react';
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -10,15 +10,20 @@ import {
 import { Link } from 'react-router-dom';
 import { useAuthContext } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface PageHeaderProps {
   title: string;
   subtitle?: string;
   action?: React.ReactNode;
   children?: React.ReactNode;
+  onSync?: () => void;
+  isSyncing?: boolean;
+  onSyncTasks?: () => void;
+  isSyncingTasks?: boolean;
 }
 
-const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action, children }) => {
+const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action, children, onSync, isSyncing, onSyncTasks, isSyncingTasks }) => {
   const { signOut } = useAuthContext();
 
   return (
@@ -31,6 +36,48 @@ const PageHeader: React.FC<PageHeaderProps> = ({ title, subtitle, action, childr
           </div>
           
           <div className="flex items-center space-x-4">
+            {onSync && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onSync}
+                      disabled={isSyncing || isSyncingTasks}
+                      className="text-gray-600 hover:text-gray-800"
+                    >
+                      <RefreshCw className={`h-5 w-5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Sincronizar Contactos/Deals con HubSpot</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            
+            {onSyncTasks && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onSyncTasks}
+                      disabled={isSyncing || isSyncingTasks}
+                      className="text-gray-600 hover:text-gray-800"
+                    >
+                      <RefreshCcw className={`h-5 w-5 ${isSyncingTasks ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Importar/Actualizar Tareas desde HubSpot</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            
             {action && <div className="hidden sm:block">{action}</div>}
             {children && <div className="hidden sm:flex">{children}</div>}
             

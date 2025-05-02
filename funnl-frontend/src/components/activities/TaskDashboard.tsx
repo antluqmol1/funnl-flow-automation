@@ -496,10 +496,22 @@ const TaskDashboard: React.FC = () => {
     refetch();
   };
 
-  // Organizar tareas por estado
-  const todoTasks = sortTasks(tasks.filter(task => task.status === 'pending' && !isOverdue(task)) || []);
-  const inProgressTasks = sortTasks(tasks.filter(task => task.status === 'overdue' || (task.status === 'pending' && isOverdue(task))) || []);
-  const doneTasks = sortTasks(tasks.filter(task => task.status === 'completed') || []);
+  // Organizar tareas por estado para las columnas Kanban, usando hubspot_status
+  const todoTasks = sortTasks(tasks.filter(task => 
+    task.hubspot_status === 'NOT_STARTED' 
+    // && !isOverdue(task) // Considera si quieres mantener la lógica de overdue aquí o manejarla visualmente
+  ) || []);
+  
+  const inProgressTasks = sortTasks(tasks.filter(task => 
+    task.hubspot_status === 'IN_PROGRESS'
+  ) || []);
+
+  const doneTasks = sortTasks(tasks.filter(task => 
+    task.hubspot_status === 'COMPLETED'
+  ) || []);
+  
+  // Podrías añadir otras columnas/filtros si HubSpot tiene más estados relevantes (WAITING, DEFERRED)
+  // const waitingTasks = sortTasks(tasks.filter(task => task.hubspot_status === 'WAITING') || []);
 
   // Función para verificar si una tarea está vencida
   function isOverdue(task: Task): boolean {

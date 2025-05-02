@@ -25,6 +25,17 @@ interface SyncDealsResult {
     };
 }
 
+// <<< INICIO NUEVA INTERFAZ >>>
+interface SyncTasksResult {
+    success: boolean;
+    message: string;
+    details?: {
+        imported_tasks: number;
+        errors: string[];
+    };
+}
+// <<< FIN NUEVA INTERFAZ >>>
+
 // --- Hook para Sincronizar Contactos ---
 export const useSyncAllContactsMutation = () => {
     const queryClient = useQueryClient();
@@ -102,4 +113,43 @@ export const useSyncAllDealsMutation = () => {
             console.error("Error en la mutación de sincronización de deals:", error);
         }
     });
-}; 
+};
+
+// <<< INICIO NUEVO HOOK >>>
+// --- Hook para Sincronizar Tareas (HubSpot -> Supabase) ---
+export const useSyncAllTasksMutation = () => {
+    const queryClient = useQueryClient();
+
+    return useMutation<SyncTasksResult, Error, void>({
+        mutationFn: async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) throw new Error('No hay sesión activa');
+
+            const response = await fetch(`${API_URL}/api/hubspot/sync-all-tasks`, { // <-- Endpoint de Tareas
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json'
+                },
+                // No necesita body para este endpoint
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                const errorMessage = errorData?.message || errorData?.error || 'Error iniciando sincronización de tareas';
+                throw new Error(errorMessage);
+            }
+
+            return await response.json();
+        },
+        onSuccess: (data) => {
+            console.log("Sincronización de tareas (HubSpot -> Supabase) completada:", data);
+            // Invalidar la query principal de tareas para refrescar la lista
+            queryClient.invalidateQueries({ queryKey: ['tasks'] });
+        },
+        onError: (error) => {
+            console.error("Error en la mutación de sincronización de tareas:", error);
+        }
+    });
+};
+// <<< FIN NUEVO HOOK >>> 

@@ -276,22 +276,86 @@ export const getTasksByHubspotId = async (hubspotId: string, hubspotType: string
   }
 };
 
-export const syncTaskWithHubspot = async (taskId: string, hubspotId: string, hubspotType: string): Promise<{ success: boolean }> => {
+export const syncTaskWithHubspot = async (
+  taskId: string,
+  hubspotId: string | null,
+  hubspotType: Task['hubspot_type']
+): Promise<{ success: boolean, message?: string }> => {
+
+  if (!hubspotId || !hubspotType) {
+    console.warn(`Intento de sincronizar tarea ${taskId} sin datos de HubSpot.`);
+    return { success: false, message: 'Faltan datos de HubSpot para sincronizar.' };
+  }
+
+  const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+
   try {
-    // Esta función actualizaría una tarea local con datos de HubSpot
-    // En una implementación real, aquí se llamaría a la API de HubSpot para sincronizar
-    const updates: Partial<Task> = {
-      hubspot_id: hubspotId,
-      hubspot_type: hubspotType as Task['hubspot_type'],
-      hubspot_last_synced: new Date().toISOString(),
-      sync_status: 'synced'
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('No hay sesión activa');
+
+    // Marcar la tarea como 'pending' antes de iniciar
+    await updateTask(taskId, { sync_status: 'pending', hubspot_last_synced: new Date().toISOString() });
+
+    // 1. Obtener la tarea completa de Supabase para enviar sus datos
+    const taskData = await getTaskById(taskId);
+    if (!taskData) {
+      throw new Error('No se pudo encontrar la tarea en Supabase para sincronizar');
+    }
+
+    // 2. Preparar el payload para el endpoint /api/hubspot/tasks/sync
+    const syncPayload = {
+      supabaseTaskId: taskId,
+      hubspotObjectId: hubspotId,
+      hubspotObjectType: hubspotType,
+      existingHubspotTaskId: taskData.hubspot_task_id || null, // Enviar ID de tarea HubSpot si ya existe
+      taskData: { // Datos de la tarea a sincronizar
+        title: taskData.title,
+        status: taskData.status,
+        priority: taskData.priority,
+        time: taskData.time
+      }
     };
 
-    await updateTask(taskId, updates);
+    // 3. Llamar al endpoint unificado del backend
+    const response = await fetch(`${API_URL}/api/hubspot/tasks/sync`, { // <-- Endpoint correcto
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(syncPayload)
+    });
+
+    if (!response.ok) {
+      // Si la respuesta no es OK, intentar obtener mensaje de error
+      const errorData = await response.json().catch(() => ({})); // Intenta parsear JSON, si falla, objeto vacío
+      const errorMessage = errorData.message || errorData.detail || `Error del servidor (${response.status})`;
+      // Lanzar error para que sea capturado por el catch general
+      throw new Error(errorMessage);
+    }
+
+    // Si la respuesta es OK, la sincronización fue exitosa (backend actualizó Supabase)
+    const resultData = await response.json();
+    console.log(`Tarea ${taskId} sincronizada correctamente vía backend. Respuesta:`, resultData);
+
+    // Nota: El backend ahora se encarga de actualizar el estado en Supabase.
+    // Podríamos opcionalmente invalidar la caché aquí para forzar un refresh,
+    // pero si confiamos en las subscriptions o la invalidación en el hook que llama,
+    // no sería estrictamente necesario.
+    // Ejemplo: queryClient.invalidateQueries({ queryKey: ['tasks', taskId] });
+
     return { success: true };
-  } catch (error) {
-    console.error('Error al sincronizar tarea con HubSpot:', error);
-    return { success: false };
+
+  } catch (error: any) {
+    console.error(`Error al sincronizar tarea ${taskId} con HubSpot:`, error);
+    // Intentar marcar la tarea como 'error' en Supabase (como fallback)
+    try {
+      await updateTask(taskId, { sync_status: 'error', hubspot_last_synced: new Date().toISOString() });
+    } catch (updateError) {
+      console.error(`Error al actualizar estado de error para tarea ${taskId}:`, updateError);
+    }
+    // Devolver el error para que el hook lo maneje (e.g., mostrar toast)
+    return { success: false, message: error.message || 'Error desconocido durante la sincronización' };
   }
 };
 

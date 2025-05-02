@@ -6,23 +6,38 @@ import NextBestAction from '@/components/activities/NextBestAction';
 import TaskList from '@/components/activities/TaskList';
 import TaskForm from '@/components/activities/TaskForm';
 import { useToast } from '@/components/ui/use-toast';
-import { useSyncAllContactsMutation, useSyncAllDealsMutation } from '@/hooks/useHubspotSync';
+import { useSyncAllContactsMutation, useSyncAllDealsMutation, useSyncAllTasksMutation } from '@/hooks/useHubspotSync';
 import HubspotConfig from '@/components/automations/HubspotConfig';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Globe2, ArrowRight, Calendar, BarChart2, Plus } from 'lucide-react';
+import { Globe2, ArrowRight, Calendar, BarChart2, Plus, AlertOctagon } from 'lucide-react';
 import { useTasksQuery } from '@/hooks/useTasks';
-import { format, isToday, parseISO } from 'date-fns';
+import { format, isToday, parseISO, isPast } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { es } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { type Task } from '@/services/supabaseService';
 
-// Función para obtener las tareas de hoy
-const getTodayTasks = (tasks: any[]) => {
+// Función para obtener las tareas para hoy (programadas para hoy, no completadas)
+const getTodayTasks = (tasks: Task[]) => {
   return tasks.filter(task => {
     if (!task.time || task.status === 'completed') return false;
     try {
       return isToday(parseISO(task.time));
+    } catch (e) {
+      return false;
+    }
+  });
+};
+
+// Función para obtener las tareas vencidas (fecha pasada, no hoy, no completadas)
+const getOverdueTasks = (tasks: Task[]) => {
+  return tasks.filter(task => {
+    // Usar estado local 'completed' para excluir
+    if (!task.time || task.status === 'completed') return false; 
+    try {
+      const taskDate = parseISO(task.time);
+      return isPast(taskDate) && !isToday(taskDate);
     } catch (e) {
       return false;
     }
@@ -35,20 +50,38 @@ const Index = () => {
   const { toast } = useToast();
   const syncContactsMutation = useSyncAllContactsMutation();
   const syncDealsMutation = useSyncAllDealsMutation();
+  const syncTasksMutation = useSyncAllTasksMutation();
   const [isHubspotConnected, setIsHubspotConnected] = useState(false);
-  const { data: tasks = [] } = useTasksQuery();
+  const { data: tasks = [], isLoading: isLoadingTasksHook } = useTasksQuery();
+  
+  // Calcular listas de tareas
   const todayTasks = getTodayTasks(tasks);
+  const overdueTasks = getOverdueTasks(tasks);
+  
   const [isNewTaskDialogOpen, setIsNewTaskDialogOpen] = useState(false);
 
-  // Función para manejar el refresh de datos de HubSpot
-  const handleHubspotRefresh = () => {
+  // Función para manejar la sincronización de Tareas (HS -> Supa)
+  const handleTaskSync = () => {
     toast({
-      title: "Sincronizando",
-      description: "Actualizando datos de HubSpot...",
-      duration: 3000,
+        title: "Sincronizando Tareas",
+        description: "Buscando nuevas tareas en HubSpot...",
+        duration: 4000,
     });
-    syncContactsMutation.mutate();
-    syncDealsMutation.mutate();
+    syncTasksMutation.mutate(undefined, { // Llamar sin argumentos
+        onSuccess: (data) => {
+            toast({
+                title: "Tareas Sincronizadas",
+                description: `${data.details?.imported_tasks || 0} tareas importadas desde HubSpot. Errores: ${data.details?.errors?.length || 0}.`,
+            });
+        },
+        onError: (error) => {
+            toast({
+                title: "Error Sincronizando Tareas",
+                description: error.message || "No se pudo completar la sincronización de tareas desde HubSpot.",
+                variant: "destructive",
+            });
+        }
+    });
   };
 
   useEffect(() => {
@@ -142,18 +175,31 @@ const Index = () => {
                 <HubspotConfig 
                   compact={true} 
                   onConfigured={setIsHubspotConnected}
-                  onRefresh={handleHubspotRefresh}
                 />
               </div>
             </CardContent>
           </Card>
         )}
         
+        {/* Sección Tareas Atrasadas (Solo si hay) */}
+        {overdueTasks.length > 0 && (
+          <div className="mt-6 mb-6">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-lg font-semibold text-red-600 flex items-center">
+                <AlertOctagon className="h-5 w-5 mr-2" />
+                Tareas Atrasadas
+              </h2>
+              <Badge variant="destructive">{overdueTasks.length}</Badge>
+            </div>
+            <TaskList showFilters={false} filteredTasks={overdueTasks} />
+          </div>
+        )}
+        
+        {/* Sección Tareas para Hoy */}
         <div className="flex justify-between items-center mb-3">
-          <h2 className="text-lg font-semibold text-gray-800">Tareas de hoy</h2>
+          <h2 className="text-lg font-semibold text-gray-800">Tareas para Hoy</h2>
           <Badge variant="outline">{todayTasks.length}</Badge>
         </div>
-        
         <TaskList showFilters={false} filteredTasks={todayTasks} />
         
         <div className="mt-4 flex gap-4">
@@ -181,17 +227,35 @@ const Index = () => {
           {/* Recomendaciones IA (ahora arriba) */}
           <NextBestAction />
           
-          {/* Tareas del día (más destacadas) */}
+          {/* Sección Tareas Atrasadas (Solo si hay) */}
+          {overdueTasks.length > 0 && (
+             <Card className="bg-red-50 border border-red-200 shadow-sm">
+               <CardHeader className="pb-2">
+                 <div className="flex justify-between items-center">
+                   <CardTitle className="text-xl font-medium flex items-center text-red-700">
+                     <AlertOctagon className="h-5 w-5 mr-2" />
+                     Tareas Atrasadas
+                   </CardTitle>
+                   <Badge variant="destructive" className="text-base px-3 py-1">{overdueTasks.length}</Badge>
+                 </div>
+               </CardHeader>
+               <CardContent className="pt-4">
+                 <TaskList showFilters={false} filteredTasks={overdueTasks} />
+               </CardContent>
+             </Card>
+          )}
+          
+          {/* Tareas para Hoy */}
           <Card className="bg-white shadow-sm">
             <CardHeader className="pb-2">
               <div className="flex justify-between items-center">
                 <div>
                   <CardTitle className="text-xl font-medium flex items-center">
                     <Calendar className="h-5 w-5 mr-2 text-funnl-primary" />
-                    Tareas de hoy, {todayFormatted}
+                    Tareas para Hoy, {todayFormatted}
                   </CardTitle>
                   <p className="text-sm text-gray-500 mt-1">
-                    {todayTasks.length} {todayTasks.length === 1 ? 'tarea' : 'tareas'} programadas
+                    {todayTasks.length} {todayTasks.length === 1 ? 'tarea' : 'tareas'} programadas para hoy
                   </p>
                 </div>
                 <div className="flex gap-2 items-center">
@@ -237,7 +301,6 @@ const Index = () => {
                   <HubspotConfig 
                     compact={true} 
                     onConfigured={setIsHubspotConnected}
-                    onRefresh={handleHubspotRefresh}
                   />
                 </div>
               </CardContent>
@@ -253,12 +316,20 @@ const Index = () => {
       <PageHeader 
         title="Daily" 
         subtitle="Gestiona tus tareas y citas"
+        onSyncTasks={handleTaskSync}
+        isSyncingTasks={syncTasksMutation.isPending}
       />
       
-      {(syncContactsMutation.isPending || syncDealsMutation.isPending) && (
+      {syncTasksMutation.isPending && (
         <div className="p-4 text-center text-sm text-gray-600 bg-blue-50 border-b border-blue-200">
-          Sincronizando datos iniciales con HubSpot...
+          Sincronizando tareas desde HubSpot...
         </div>
+      )}
+
+      {(syncContactsMutation.isPending || syncDealsMutation.isPending) && !syncTasksMutation.isPending && (
+         <div className="p-4 text-center text-sm text-gray-600 bg-yellow-50 border-b border-yellow-200">
+           Realizando sincronización inicial con HubSpot...
+         </div>
       )}
 
       {/* Renderizamos uno u otro layout según el tamaño de pantalla */}
